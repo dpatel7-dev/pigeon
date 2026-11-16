@@ -57,7 +57,7 @@ svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
 .icon-btn[aria-pressed=true] { background: var(--hover); color: var(--ink); }
 
 /* ── login + share ── */
-.center { min-height: 100%; display: grid; place-items: center; padding: 28px 16px; overflow: auto; height: 100%; }
+.center { display: grid; place-items: center; padding: 28px 16px; overflow: auto; height: calc(100% - var(--site-nav, 0px)); }
 .card { width: min(440px, 100%); border-radius: 24px; padding: 30px 28px 24px; position: relative; overflow: hidden; }
 .card::before { content: ""; position: absolute; inset: 0 0 auto; height: 6px; background: repeating-linear-gradient(-45deg, var(--teal) 0 10px, transparent 10px 16px, var(--violet) 16px 26px, transparent 26px 32px); opacity: .85; }
 .hello { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
@@ -83,7 +83,7 @@ code.cmd { display: block; font: .8rem/1.45 var(--mono); background: var(--hover
 .share-preview { display: block; max-width: 100%; max-height: 50vh; border-radius: 14px; margin: 14px auto 0; }
 
 /* ── the app ── */
-.app { height: 100%; display: grid; grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: auto 1fr; gap: 12px; padding: 12px; }
+.app { height: calc(100% - var(--site-nav, 0px)); display: grid; grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: auto 1fr; gap: 12px; padding: 12px; }
 .topbar { grid-column: 1 / -1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 8px 10px 8px 14px; border-radius: 18px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.15rem; letter-spacing: -.01em; width: 210px; flex: none; }
 .brand canvas { width: 40px; height: 32px; image-rendering: pixelated; }
