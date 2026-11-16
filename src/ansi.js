@@ -43,7 +43,9 @@ function parseHex(hex) {
 }
 
 function to256(r, g, b) {
-  if (Math.max(r, g, b) - Math.min(r, g, b) < 12) {
+  // Greyish colours go to the grey ramp: the colour cube only has a few greys,
+  // and its nearest "tinted" entries turn blue-greys into lavender.
+  if (Math.max(r, g, b) - Math.min(r, g, b) < 32) {
     const gray = Math.round((r + g + b) / 3);
     if (gray < 8) return 16;
     if (gray > 248) return 231;

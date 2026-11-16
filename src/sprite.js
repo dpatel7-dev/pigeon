@@ -38,8 +38,13 @@ function draw(grid, ink, { bg = null } = {}) {
 function cell(top, bottom, bg) {
   if (A.getLevel() === 0) return top || bottom ? (top && bottom ? '█' : top ? '▀' : '▄') : ' ';
   if (!top && !bottom) return bg ? A.paint(' ', { bg }) : ' ';
-  if (top && bottom) return top === bottom ? A.paint(' ', { bg: top }) : A.paint('▀', { fg: top, bg: bottom });
-  if (top) return A.paint('▀', bg ? { fg: top, bg } : { fg: top });
+  // Block characters don't quite fill their half of the line in terminals that
+  // add line spacing (macOS Terminal leaves a sliver at the TOP of each line),
+  // but a background colour always fills the whole cell. So anything touching
+  // the top of a cell is drawn as background, with the lower-half block ▄ (which
+  // does sit flush with the bottom) on top of it. Never ▀.
+  if (top && bottom) return top === bottom ? A.paint(' ', { bg: top }) : A.paint('▄', { fg: bottom, bg: top });
+  if (top) return bg ? A.paint('▄', { fg: bg, bg: top }) : A.paint('▀', { fg: top });
   return A.paint('▄', bg ? { fg: bottom, bg } : { fg: bottom });
 }
 
