@@ -94,13 +94,142 @@ test('a nest end to end: make, send a big file and a folder, get them back, shar
 
   // wrong password, strangers, and a full nest
   await assert.rejects(new Nest({ site }).enter('dhruv', 'nope'), /Wrong nest name or password/);
-  await assert.rejects(new Nest({ site }).enter('mallory', 'pw123456', { make: true }), /isn't taking new ones/);
+  await assert.rejects(new Nest({ site }).enter('mallory', 'pw123456', { make: true }), /invite code/);
+  assert.equal(await new Nest({ site }).enter('mallory', 'pw123456'), 'invite', 'asks for an invite instead of failing');
   fs.writeFileSync(path.join(src, 'huge.bin'), crypto.randomBytes(25 * 1024 * 1024));
   await assert.rejects(phone.send(path.join(src, 'huge.bin')), /no room left/);
 
   await phone.remove(files.find((f) => f.meta.name === 'big.bin'));
   assert.equal((await phone.list()).files.length, 1);
   await assert.rejects(fetchShared(s.url, path.join(tmp, 'friend')), /deleted|expired/);
+});
+
+test('a drive: folders, rename, move, stars, trash, devices, sending to a device, invites', async () => {
+  process.env.PIGEON_HOME = path.join(tmp, 'home3');
+  const laptop = new Nest({ site });
+  assert.equal(await laptop.enter('dhruv', 'hunter22'), 'in');
+  const src = path.join(tmp, 'drive');
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, 'a.txt'), 'alpha');
+  fs.writeFileSync(path.join(src, 'b.txt'), 'beta');
+
+  await laptop.mkdir(['Projects', 'game']);
+  await laptop.send(path.join(src, 'a.txt'), { folder: ['Projects', 'game'] });
+  await laptop.send(path.join(src, 'b.txt'));
+  let { files } = await laptop.list();
+  const { inside, under } = require('../src/nest');
+  assert.deepEqual(inside(files, []).dirs.map((d) => d.name), ['Projects']);
+  assert.deepEqual(inside(files, ['Projects']).dirs.map((d) => d.name), ['game']);
+  assert.deepEqual(inside(files, ['Projects', 'game']).files.map((f) => f.meta.name), ['a.txt']);
+
+  // rename + move + star are just new (locked) labels
+  const b = files.find((f) => f.meta.name === 'b.txt');
+  await laptop.relabel([{ file: b, meta: { ...b.meta, name: 'notes.txt', path: ['Projects'], star: true } }]);
+  ({ files } = await laptop.list());
+  const n = files.find((f) => f.id === b.id);
+  assert.equal(n.meta.name, 'notes.txt');
+  assert.deepEqual(n.meta.path, ['Projects']);
+  assert.equal(n.meta.star, true);
+  const db = fs.readFileSync(path.join(tmp, 'data', 'pigeon.db'));
+  assert.ok(!db.includes('notes.txt') && !db.includes('Projects'), 'the website never sees names or folders');
+
+  // the trash, and putting things back
+  await laptop.trash(under(files, ['Projects']));
+  ({ files } = await laptop.list());
+  assert.equal(inside(files, []).dirs.length, 0);
+  await laptop.trash(under(files, ['Projects']), true);
+  ({ files } = await laptop.list());
+  assert.deepEqual(inside(files, []).dirs.map((d) => d.name), ['Projects']);
+
+  // a second device, and a file sent straight to it
+  process.env.PIGEON_HOME = path.join(tmp, 'home4');
+  const phone = new Nest({ site });
+  await phone.enter('dhruv', 'hunter22');
+  assert.notEqual(phone.did, laptop.did);
+  const devices = await laptop.devices();
+  const target = devices.find((d) => d.did === phone.did);
+  assert.ok(target && !target.me && devices.find((d) => d.me).did === laptop.did);
+  fs.writeFileSync(path.join(src, 'for-phone.txt'), 'hello phone');
+  await laptop.send(path.join(src, 'for-phone.txt'), { to: phone.did, drop: true });
+  assert.equal((await laptop.inbox()).length, 0, 'not for the laptop');
+  const box = await phone.inbox();
+  assert.deepEqual(box.map((f) => f.meta.name), ['for-phone.txt']);
+  const got = await phone.get(box[0], path.join(tmp, 'phone-dl'));
+  assert.equal(fs.readFileSync(got, 'utf8'), 'hello phone');
+  await phone.got(box[0], true);
+  assert.equal((await phone.inbox()).length, 0);
+  assert.ok(!(await phone.list()).files.some((f) => f.meta.name === 'for-phone.txt'), 'a drop-off is gone once it arrives');
+  // and an existing file, delivered without uploading it again
+  await laptop.http('deliver', { body: { ids: [b.id], to: phone.did } });
+  assert.deepEqual((await phone.inbox()).map((f) => f.meta.name), ['notes.txt']);
+
+  // invites: the owner makes one, it makes exactly one nest
+  const inv = await laptop.invite();
+  process.env.PIGEON_HOME = path.join(tmp, 'home5');
+  const friend = new Nest({ site });
+  assert.equal(await friend.enter('friend.one', 'friendpw', { make: true, invite: inv.code }), 'made');
+  await assert.rejects(friend.invite(), /owner/);
+  process.env.PIGEON_HOME = path.join(tmp, 'home6');
+  await assert.rejects(new Nest({ site }).enter('friend.two', 'friendpw', { make: true, invite: inv.code }), /doesn't work/);
+  assert.equal((await friend.list()).files.length, 0, "a friend's nest is their own");
+});
+
+test('keeping a copy in a folder (sync), both ways', async () => {
+  process.env.PIGEON_HOME = path.join(tmp, 'home3');
+  const nest = new Nest();
+  const { syncOnce } = require('../src/sync');
+  const root = path.join(tmp, 'Pigeon');
+  const first = await syncOnce(nest, root);
+  assert.ok(first.down >= 2);
+  assert.equal(fs.readFileSync(path.join(root, 'Projects', 'game', 'a.txt'), 'utf8'), 'alpha');
+  assert.ok(fs.existsSync(path.join(root, 'Projects', 'notes.txt')));
+  fs.writeFileSync(path.join(root, 'Projects', 'new.md'), '# new');
+  fs.mkdirSync(path.join(root, 'Projects', 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'Projects', 'node_modules', 'x.js'), 'skip me');
+  const second = await syncOnce(nest, root);
+  assert.equal(second.up, 1, 'only the new file goes up');
+  const { files } = await nest.list();
+  assert.ok(files.some((f) => f.meta.name === 'new.md' && f.meta.path.join('/') === 'Projects'));
+  const third = await syncOnce(nest, root);
+  assert.deepEqual(third, { down: 0, up: 0 }, 'nothing moves when nothing changed');
+});
+
+test('the browser dashboard: signed in, passes requests along, saves to this computer', async () => {
+  process.env.PIGEON_HOME = path.join(tmp, 'home3');
+  const save = path.join(tmp, 'dash-saves');
+  const { serve } = require('../src/dashboard');
+  const d = await serve({ saveDir: save, openBrowser: false });
+  try {
+    const page = await (await fetch(d.url)).text();
+    assert.match(page, /"session":\{"nest":"dhruv"/);
+    assert.ok(!page.includes('/*PIGEON_QR*/'));
+    const base = d.url.replace(/\/$/, '');
+    const s = new Nest();
+    const list = await (await fetch(base + '/p/api/list', { method: 'POST', headers: { authorization: 'Bearer ' + s.token, 'content-type': 'application/json' }, body: '{}' })).json();
+    assert.ok(Array.isArray(list.files) && list.files.length > 0);
+    const r = await (await fetch(base + '/local/save?name=hi.txt&path=Projects', { method: 'POST', body: 'hello' })).json();
+    assert.equal(fs.readFileSync(path.join(save, 'Projects', 'hi.txt'), 'utf8'), 'hello');
+    assert.match(r.where, /hi\.txt$/);
+    const wrong = await fetch(d.url.replace(/\/[a-f0-9]+\/$/, '/nope/'));
+    assert.equal(wrong.status, 404, 'only the secret address works');
+  } finally { d.close(); }
+});
+
+test('pixel art and QR codes never use the upper-half block (it leaves seams in macOS Terminal)', () => {
+  const A = require('../src/ansi');
+  const S = require('../src/sprite');
+  const Coo = require('../src/bird');
+  const before = A.getLevel();
+  for (const level of [2, 3]) {
+    A.setLevel(level);
+    const art = Coo.draw('idle', 0, '#f5f7fa').join('\n');
+    assert.doesNotMatch(art, /▀/);
+    assert.match(art, /▄/);
+    assert.doesNotMatch(S.draw(['AB', 'B.', '.A', 'AA'], { A: '#ff0000', B: '#00ff00' }, { bg: '#000000' }).join(''), /▀/);
+    const qr = QR.lines('https://example.com', { paint: (t, fg, bg) => A.paint(t, { fg, bg }) }).join('');
+    assert.doesNotMatch(qr, /[▀█]/);
+  }
+  A.setLevel(before);
 });
 
 test('paths from drag and drop', () => {
@@ -121,17 +250,31 @@ test('the screen: list, link panel with a QR code, quit', async () => {
   const { App } = require('../src/app');
   const app = new App({ input, output });
   const done = app.run();
-  for (let i = 0; i < 100 && !app.files.length; i++) await new Promise((r) => setTimeout(r, 20));
-  assert.equal(app.files.length, 1);
+  try {
+  const has = () => app.files.findIndex((f) => f.meta.name === 'proj');
+  for (let i = 0; i < 150 && has() < 0; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.ok(has() >= 0);
+  assert.ok(app.files[0].dir, 'folders come first');
   await new Promise((r) => setTimeout(r, 50));
   assert.match(drawn, /proj\//);
+  assert.match(drawn, /Projects\//);
+  app.sel = has();
   input.write('l');
   for (let i = 0; i < 100 && !app.panel; i++) await new Promise((r) => setTimeout(r, 20));
   assert.equal(app.panel.kind, 'qr');
   await new Promise((r) => setTimeout(r, 50));
-  assert.match(drawn, /█/);
+  assert.match(drawn, /▄/);
   input.write('\x1b');
   await new Promise((r) => setTimeout(r, 80));
+  // into a folder and back out
+  app.sel = 0;
+  input.write('\r');
+  for (let i = 0; i < 50 && !app.path.length; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(app.path, ['Projects']);
+  input.write('\x1b[D');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(app.path, []);
   input.write('q');
   await done;
+  } finally { app.quit(); }
 });

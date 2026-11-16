@@ -1,7 +1,8 @@
 'use strict';
-// Your nest: the account on a pigeon website, and everything that moves in
-// and out of it. Sending locks a file piece by piece and uploads it; getting
-// downloads the pieces and unlocks them. Folders travel as one bundle.
+// Your nest: your drive on a pigeon website, and everything that moves in and
+// out of it. Sending locks a file piece by piece and uploads it; getting
+// downloads the pieces and unlocks them. Every name, folder and star lives in
+// a file's locked label ("meta"), so the website never learns them.
 
 const fs = require('fs');
 const os = require('os');
@@ -10,7 +11,15 @@ const C = require('./crypto');
 
 const home = () => process.env.PIGEON_HOME || path.join(os.homedir(), '.pigeon');
 const DEFAULT_SITE = 'https://djp7.pythonanywhere.com/pigeon';
-const device = () => `${os.hostname().replace(/\.local$/, '').slice(0, 40)} (${{ darwin: 'Mac', win32: 'Windows', linux: 'Linux' }[process.platform] || process.platform})`;
+const PAR = 3; // pieces in flight at once, each way
+const device = () => {
+  const s = readJson(path.join(home(), 'session.json'), {});
+  if (s.deviceName) return s.deviceName;
+  return `${os.hostname().replace(/\.local$/, '').slice(0, 40)} (${{ darwin: 'Mac', win32: 'Windows', linux: 'Linux' }[process.platform] || process.platform})`;
+};
+const newDid = () => require('crypto').randomBytes(8).toString('hex');
+/** "Projects/game" for a folder path like ['Projects', 'game']. */
+const pathKey = (p) => (Array.isArray(p) ? p : []).join('/');
 
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
@@ -47,13 +56,14 @@ class Nest {
     this.name = s.nest || null;
     this.token = s.token || null;
     this.key = s.key ? C.unb64(s.key) : null;
+    this.did = /^[a-f0-9]{16}$/.test(s.did || '') ? s.did : newDid();
   }
 
   get in() { return !!(this.token && this.key); }
 
   save() {
     const s = session.load();
-    session.save({ ...s, site: this.site, nest: this.name, token: this.token, key: this.key ? C.b64(this.key) : undefined });
+    session.save({ ...s, site: this.site, nest: this.name, token: this.token, key: this.key ? C.b64(this.key) : undefined, did: this.did });
   }
 
   async http(what, { method = 'POST', body, raw, auth = true, timeout = 60000 } = {}) {
@@ -86,24 +96,29 @@ class Nest {
   }
 
   // ── accounts ──────────────────────────────────────────────────────────────
-  /** Log in, or make the nest if it doesn't exist yet (and the site allows it). Returns 'in' or 'made'. */
-  async enter(name, password, { make = 'ask' } = {}) {
+  /** Log in, or make the nest if it doesn't exist yet. Returns 'in', 'made', or 'new' (make: 'ask'). */
+  async enter(name, password, { make = 'ask', invite = '' } = {}) {
     name = String(name || '').toLowerCase().trim();
     const hi = await this.http('hello', { body: { nest: name }, auth: false });
     if (hi.exists) {
       const k = await C.stretch(password, hi.salt);
-      const r = await this.http('login', { body: { nest: name, proof: k.proof, device: device() }, auth: false });
-      Object.assign(this, { name, token: r.token, key: k.key });
+      const r = await this.http('login', { body: { nest: name, proof: k.proof, device: device(), did: this.did }, auth: false });
+      Object.assign(this, { name, token: r.token, key: k.key, did: r.did || this.did });
       this.save();
       return 'in';
     }
-    if (!hi.canMake) throw new PigeonError(`There's no nest called "${name}" on this site, and it isn't taking new ones.`);
+    if (!hi.canMake && !invite) {
+      if (make === 'ask' && hi.invites) return 'invite';
+      throw new PigeonError(hi.invites
+        ? `There's no nest called "${name}" here, and this site needs an invite code for new nests. Ask the site's owner for one.`
+        : `There's no nest called "${name}" here, and this site isn't taking new nests.`);
+    }
     if (make === false) throw new PigeonError(`There's no nest called "${name}" yet.`);
     if (make === 'ask') return 'new';
     const salt = C.newSalt();
     const k = await C.stretch(password, salt);
-    const r = await this.http('signup', { body: { nest: name, salt, proof: k.proof, device: device() }, auth: false });
-    Object.assign(this, { name, token: r.token, key: k.key });
+    const r = await this.http('signup', { body: { nest: name, salt, proof: k.proof, device: device(), did: this.did, invite }, auth: false });
+    Object.assign(this, { name, token: r.token, key: k.key, did: r.did || this.did });
     this.save();
     return 'made';
   }
@@ -116,50 +131,65 @@ class Nest {
   }
 
   // ── files ─────────────────────────────────────────────────────────────────
-  /** Your files, newest first, with their real names unlocked. */
+  /** Everything in your nest (folders, files, trash), newest first, labels unlocked. */
   async list() {
     const r = await this.http('list', { body: {} });
-    const files = [];
-    for (const f of r.files) {
-      try {
-        const key = C.unwrapKey(this.key, f.wrapped);
-        files.push({ ...f, fileKey: key, meta: C.openMeta(key, f.meta) });
-      } catch {
-        files.push({ ...f, fileKey: null, meta: { name: '(locked with a different password)', size: f.size } });
-      }
-    }
-    return { files, used: r.used, quota: r.quota, maxFile: r.maxFile };
+    const files = r.files.map((f) => this.unlock(f));
+    return { files, used: r.used, quota: r.quota, maxFile: r.maxFile, me: r.me, owner: r.owner, signups: r.signups };
   }
 
-  /** Send a file or a folder. onProgress(doneBytes, totalBytes). */
-  async send(target, { onProgress = () => {}, name } = {}) {
+  unlock(f) {
+    try {
+      const key = C.unwrapKey(this.key, f.wrapped);
+      const meta = C.openMeta(key, f.meta);
+      if (!Array.isArray(meta.path)) meta.path = [];
+      if (f.kind === 'bundle' && !meta.kind) meta.kind = 'folder';
+      return { ...f, fileKey: key, meta };
+    } catch {
+      return { ...f, fileKey: null, meta: { name: '(locked with a different password)', size: f.size, path: [] } };
+    }
+  }
+
+  /**
+   * Send a file, or a folder as one bundle. folder: where it goes in your nest
+   * (['Projects']). to: a device id - it's delivered there by itself.
+   */
+  async send(target, { onProgress = () => {}, name, folder = [], to, drop = false } = {}) {
     let file = path.resolve(target);
     let st = fs.statSync(file);
-    let meta = { name: name || path.basename(file), type: mimeOf(file), kind: 'file', from: device(), made: st.mtimeMs };
+    let meta = { name: name || path.basename(file), type: mimeOf(file), kind: 'file', from: device(), made: st.mtimeMs, path: folder };
     let cleanup = null;
     if (st.isDirectory()) {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pigeon-'));
       const bundle = path.join(tmp, path.basename(file) + '.tar.gz');
       pack(file, bundle);
       cleanup = () => fs.rmSync(tmp, { recursive: true, force: true });
-      meta = { ...meta, name: path.basename(file), kind: 'folder', type: 'application/gzip' };
+      meta = { ...meta, name: name || path.basename(file), kind: 'folder', type: 'application/gzip' };
       file = bundle;
       st = fs.statSync(file);
     }
+    if (to) meta.drop = !!drop;
     try {
       meta.size = st.size;
       const chunks = Math.max(1, Math.ceil(st.size / C.CHUNK));
       const fileKey = C.newFileKey();
-      const r = await this.http('start', { body: { size: st.size, chunks, meta: C.sealMeta(fileKey, meta), wrapped: C.wrapKey(this.key, fileKey), device: device() } });
+      const r = await this.http('start', { body: { size: st.size, chunks, meta: C.sealMeta(fileKey, meta), wrapped: C.wrapKey(this.key, fileKey), device: device(), to: to || undefined, bundle: meta.kind === 'folder' || undefined } });
       const fd = fs.openSync(file, 'r');
       try {
-        const buf = Buffer.alloc(C.CHUNK);
+        let sent = 0;
+        const flying = new Set();
         for (let n = 0; n < chunks; n++) {
-          const got = fs.readSync(fd, buf, 0, C.CHUNK, n * C.CHUNK);
-          const box = C.sealChunk(fileKey, n, buf.subarray(0, got));
-          await retry(() => this.http(`piece?id=${r.id}&n=${n}`, { method: 'PUT', raw: box, timeout: 180000 }));
-          onProgress(Math.min(st.size, (n + 1) * C.CHUNK), st.size);
+          const buf = Buffer.alloc(Math.min(C.CHUNK, st.size - n * C.CHUNK));
+          fs.readSync(fd, buf, 0, buf.length, n * C.CHUNK);
+          const box = C.sealChunk(fileKey, n, buf);
+          const job = retry(() => this.http(`piece?id=${r.id}&n=${n}`, { method: 'PUT', raw: box, timeout: 180000 }))
+            .then(() => { sent += buf.length; onProgress(sent, st.size); });
+          flying.add(job);
+          job.then(() => flying.delete(job), () => {});
+          if (flying.size >= PAR) await Promise.race(flying);
         }
+        await Promise.all(flying);
+        if (!st.size) onProgress(0, 0);
       } finally {
         fs.closeSync(fd);
       }
@@ -170,19 +200,91 @@ class Nest {
     }
   }
 
+  /** Make a folder in your nest (and any missing folders above it). */
+  async mkdir(folder, known = null) {
+    const all = known || (await this.list()).files;
+    const have = new Set(all.filter((f) => f.kind === 'dir' && !f.trashed).map((f) => pathKey([...f.meta.path, f.meta.name])));
+    for (let i = 1; i <= folder.length; i++) {
+      const p = folder.slice(0, i);
+      if (have.has(pathKey(p))) continue;
+      const fileKey = C.newFileKey();
+      const meta = { name: p[p.length - 1], kind: 'dir', path: p.slice(0, -1), from: device(), made: Date.now() };
+      await this.http('start', { body: { dir: true, meta: C.sealMeta(fileKey, meta), wrapped: C.wrapKey(this.key, fileKey), device: device() } });
+      have.add(pathKey(p));
+    }
+  }
+
+  /** Change labels (rename, move, star): [{ file, meta }] with the new meta. */
+  async relabel(changes) {
+    if (!changes.length) return;
+    const items = changes.map(({ file, meta }) => ({ id: file.id, meta: C.sealMeta(file.fileKey, meta) }));
+    for (let i = 0; i < items.length; i += 500) await this.http('meta', { body: { items: items.slice(i, i + 500) } });
+  }
+
+  async trash(files, restore = false) { return this.http('trash', { body: { ids: files.map((f) => f.id), restore } }); }
+
   /** Download a file (from list()) into a folder. Returns where it went. */
   async get(f, dir, { onProgress = () => {} } = {}) {
     if (!f.fileKey) throw new PigeonError("That file was locked with a different password, so it can't be opened here.");
     return fetchInto({ chunks: f.chunks, size: f.size, meta: f.meta, key: f.fileKey, piece: (n) => this.http(`piece?id=${f.id}&n=${n}`, { method: 'GET', timeout: 180000 }) }, dir, onProgress);
   }
 
-  async remove(f) { return this.http('delete', { body: { id: f.id } }); }
+  /** Delete for good (skips the trash). */
+  async remove(f) { return this.http('delete', { body: { ids: (Array.isArray(f) ? f : [f]).map((x) => x.id) } }); }
 
   /** A link anyone can open for a while: the key rides after the '#', which never reaches the website. */
   async share(f, hours = 24) {
     const r = await this.http('share', { body: { id: f.id, hours } });
     return { url: `${this.site}/s/${r.code}#${C.b64url(f.fileKey)}`, expires: r.expires, code: r.code };
   }
+
+  // ── devices ───────────────────────────────────────────────────────────────
+  async devices() { return (await this.http('devices', { body: {} })).devices; }
+  async forget(did) { return this.http('forget', { body: { did } }); }
+  async nameDevice(name) {
+    await this.http('name', { body: { name } });
+    session.save({ ...session.load(), deviceName: name });
+  }
+  /** Files other devices sent straight to this one. */
+  async inbox() { return (await this.http('inbox', { body: {} })).files.map((f) => this.unlock(f)); }
+  async got(f, drop = false) { return this.http('got', { body: { id: f.id, drop } }); }
+  async invite() { return this.http('invite', { body: {} }); }
+}
+
+/** The folders and files directly inside `folder`, with folders that only exist because files are in them. */
+function inside(files, folder = []) {
+  const key = pathKey(folder);
+  const dirs = new Map();
+  const here = [];
+  for (const f of files) {
+    if (f.trashed || !f.done) continue;
+    const p = pathKey(f.meta.path);
+    if (f.kind === 'dir') {
+      if (p === key) dirs.set(f.meta.name, dirs.get(f.meta.name) || f);
+      continue;
+    }
+    if (p === key) here.push(f);
+    else if (key === '' || p.startsWith(key + '/')) {
+      const next = f.meta.path[folder.length];
+      if (next && !dirs.has(next)) dirs.set(next, null);
+    }
+  }
+  for (const f of files) { // folders whose only contents are folders
+    if (f.trashed || f.kind !== 'dir') continue;
+    const p = f.meta.path;
+    if (p.length > folder.length && pathKey(p.slice(0, folder.length)) === key && !dirs.has(p[folder.length])) dirs.set(p[folder.length], null);
+  }
+  return { dirs: [...dirs.entries()].map(([name, entry]) => ({ name, entry })).sort((a, b) => a.name.localeCompare(b.name)), files: here };
+}
+
+/** Everything at or below a folder (to move, trash or delete it). */
+function under(files, folder) {
+  const key = pathKey(folder);
+  return files.filter((f) => {
+    const own = pathKey([...f.meta.path, f.meta.name]);
+    const p = pathKey(f.meta.path);
+    return (f.kind === 'dir' && own === key) || p === key || p.startsWith(key + '/');
+  });
 }
 
 /** Open a share link (no nest needed). */
@@ -204,8 +306,13 @@ async function fetchInto({ chunks, size, meta, key, piece }, dir, onProgress) {
   const fd = fs.openSync(tmp, 'w');
   try {
     let done = 0;
+    const ahead = [];
+    const want = (n) => { if (n < chunks) { ahead[n] = retry(() => piece(n)); ahead[n].catch(() => {}); } };
+    for (let n = 0; n < Math.min(PAR, chunks); n++) want(n);
     for (let n = 0; n < chunks; n++) {
-      const box = await retry(() => piece(n));
+      const box = await ahead[n];
+      ahead[n] = null;
+      want(n + PAR);
       const plain = C.openChunk(key, n, box);
       fs.writeSync(fd, plain);
       done += plain.length;
@@ -287,4 +394,4 @@ function downloads() {
   return fs.existsSync(d) ? d : here;
 }
 
-module.exports = { Nest, PigeonError, fetchShared, safeName, free, pack, unpack, mimeOf, downloads, home, site, session, device, DEFAULT_SITE };
+module.exports = { Nest, PigeonError, fetchShared, safeName, free, pack, unpack, mimeOf, downloads, home, site, session, device, DEFAULT_SITE, inside, under, pathKey, SKIP };

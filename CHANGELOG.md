@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0
+- pigeon is a drive now: folders, rename, move, stars, search, previews (photos, video, audio, PDF, text), shared links and a trash with undo. Names and folders stay locked; the website still can't read them.
+- Send to a device: pick one of your signed-in devices and the file lands there by itself (terminal: `p`, `pigeon send --to`; browser: Send to a device).
+- `pigeon dashboard` (or `w`): your nest in the browser, already signed in, saving straight into a folder on this computer.
+- `pigeon sync`: keep a copy of your nest in ~/Pigeon, both ways.
+- Faster: three pieces in flight each way.
+- Sign-up fixed: pigeon's server no longer uses SQLite's write-ahead log, which fails on PythonAnywhere's network disk. Clear "Open my nest" / "Make a nest" choice, names can have dots, readable errors.
+- Invites: the site's first nest is its owner, and can invite people (`pigeon invite`).
+- Pixel art and QR codes no longer show seams in macOS Terminal.
+- A new look in the browser: glassy, colourful, and laid out like a drive, with a phone layout.
+
 ## 1.0.0
 - First release: a nest on your own website, and files that move between your devices locked end to end.
 - Terminal app with Coo the pigeon: drop files or folders onto the window to send them, Enter to save, `l` for a share link with a QR code, `c` to catch the next thing from your phone.

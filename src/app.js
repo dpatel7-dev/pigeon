@@ -1,14 +1,15 @@
 'use strict';
-// pigeon's screen: your nest's files in one clean list.
+// pigeon's screen: your nest, folder by folder.
 //
 //   [Coo]  pigeon                               dhruv · djp7.pythonanywhere.com
 //          3 files · 9 MB of 400 MB  ━━━━──────
 //   ───────────────────────────────────────────────────────────────────────────
-//   › PNG  phone-photo.png         12 KB   from iPhone        2m ago
-//     DIR  my-project/            165 KB   from laptop        1h ago
+//   My nest › Projects
+//   › ▤    game/                                            folder
+//     PNG  phone-photo.png    ★     12 KB   from iPhone        2m ago
 //   ───────────────────────────────────────────────────────────────────────────
 //   › drop a file here, or type its path
-//   enter save · l link + QR · c catch from phone · d delete · q quit
+//   enter open/save · l link · p send to device · n folder · ? keys
 
 const fs = require('fs');
 const os = require('os');
@@ -19,7 +20,7 @@ const Coo = require('./bird');
 const QR = require('./qr');
 const { Editor } = require('./editor');
 const { Tui, fit, spread, size, ago, bar, copy, open: openFile } = require('./tui');
-const { Nest, downloads, session, DEFAULT_SITE } = require('./nest');
+const { Nest, downloads, session, DEFAULT_SITE, inside, under, pathKey } = require('./nest');
 const pkg = require('../package.json');
 
 const TAGS = { image: ['IMG', 'violet'], folder: ['DIR', 'orange'], doc: ['DOC', 'teal'], other: ['', 'dim'] };
@@ -51,7 +52,11 @@ class App {
     Th.use(this.cfg.theme || 'sky');
     this.nest = new Nest();
     this.ed = new Editor();
-    this.files = [];
+    this.files = []; // what's shown: folders, then files, in the folder you're in
+    this.all = []; // everything in the nest
+    this.path = [];
+    this.prompt = null; // { label, ed, done } when asking for a name
+    this.inboxSeen = new Set();
     this.used = 0;
     this.quota = 0;
     this.sel = 0;
@@ -66,7 +71,7 @@ class App {
     this.ui = new Tui({ input, output, paper: Th.t().paper, render: (w, h) => this.frame(w, h) });
     this.ui.on('key', (s, k) => this.onKey(s, k));
     this.ui.on('paste', (t) => { this.target().insert(t.replace(/\n+/g, ' ')); this.dirty(); });
-    this.ui.on('mouse', (m) => { if (m.wheel) { this.move(m.wheel); this.dirty(); } });
+    this.ui.on('mouse', (m) => { if (m.wheel) { this.moveSel(m.wheel); this.dirty(); } });
   }
 
   newForm() {
@@ -76,15 +81,15 @@ class App {
     return f;
   }
 
-  target() { return this.form ? this.form.fields[this.form.at][2] : this.ed; }
+  target() { return this.form ? this.form.fields[this.form.at][2] : this.prompt ? this.prompt.ed : this.ed; }
 
   run() {
     return new Promise((resolve) => {
       this.done = resolve;
       this.ui.start();
       this.ticker = setInterval(() => { if (this.flash && this.flash.until < Date.now()) this.flash = null; this.dirty(); }, 150);
-      this.poller = setInterval(() => this.refresh(true), 8000);
-      if (!this.form) this.refresh();
+      this.poller = setInterval(() => { this.refresh(true); this.checkInbox(); }, 8000);
+      if (!this.form) { this.refresh(); this.checkInbox(); }
     });
   }
 
@@ -92,6 +97,7 @@ class App {
     clearInterval(this.ticker);
     clearInterval(this.poller);
     clearInterval(this.catcher);
+    if (this.dash) this.dash.close();
     this.ui.stop();
     if (this.done) this.done();
   }
@@ -104,11 +110,13 @@ class App {
     if (this.form || !this.nest.in) return;
     try {
       const r = await this.nest.list();
-      const selId = this.files[this.sel] && this.files[this.sel].id;
-      this.files = r.files.filter((f) => f.done);
+      const selKey = this.files[this.sel] && keyOf(this.files[this.sel]);
+      this.all = r.files;
       this.used = r.used;
       this.quota = r.quota;
-      const i = this.files.findIndex((f) => f.id === selId);
+      this.owner = r.owner;
+      this.layout();
+      const i = this.files.findIndex((f) => keyOf(f) === selKey);
       this.sel = i >= 0 ? i : Math.min(this.sel, Math.max(0, this.files.length - 1));
       this.offline = false;
     } catch (e) {
@@ -119,18 +127,127 @@ class App {
     this.dirty();
   }
 
+  /** What's in the folder you're in: its folders first, then its files (newest first). */
+  layout() {
+    const { dirs, files } = inside(this.all, this.path);
+    this.files = dirs.map((d) => ({ dir: true, name: d.name, path: [...this.path, d.name], entry: d.entry, meta: { name: d.name, star: d.entry && d.entry.meta.star } }))
+      .concat(files.sort((a, b) => b.made - a.made));
+  }
+
+  go(path) { this.path = path; this.sel = 0; this.top = 0; this.layout(); this.dirty(); }
+
+  /** Files other devices sent straight to this computer: save them as they land. */
+  async checkInbox() {
+    if (this.form || !this.nest.in) return;
+    let list = [];
+    try { list = await this.nest.inbox(); } catch { return; }
+    for (const f of list) {
+      if (this.inboxSeen.has(f.id)) continue;
+      this.inboxSeen.add(f.id);
+      this.queue.push({ kind: 'get', file: f, inbox: true });
+    }
+    this.pump();
+  }
+
+  ask(label, value, done) {
+    const ed = new Editor();
+    if (value) ed.set(value);
+    this.prompt = { label, ed, done };
+    this.dirty();
+  }
+
+  newFolder() {
+    this.ask('New folder name', '', async (name) => {
+      name = name.trim().replace(/\//g, '-');
+      if (!name) return;
+      try { await this.nest.mkdir([...this.path, name], this.all); this.say(`Made ${name}/`, 'ok'); await this.refresh(true); } catch (e) { this.say(e.message, 'err'); }
+    });
+  }
+
+  rename(f) {
+    if (!f || (!f.dir && !f.fileKey)) return;
+    this.ask('Rename to', f.meta.name, async (name) => {
+      name = name.trim().replace(/\//g, '-');
+      if (!name || name === f.meta.name) return;
+      try {
+        if (!f.dir) await this.nest.relabel([{ file: f, meta: { ...f.meta, name } }]);
+        else await this.nest.relabel(rebase(this.all, f.path, [...f.path.slice(0, -1), name]));
+        this.say(`Renamed to ${name}.`, 'ok');
+        await this.refresh(true);
+      } catch (e) { this.say(e.message, 'err'); }
+    });
+  }
+
+  move(f) {
+    if (!f) return;
+    this.ask('Move to folder (like Projects/game; empty = My nest)', this.path.join('/'), async (to) => {
+      const dest = to.split('/').map((x) => x.trim()).filter(Boolean);
+      try {
+        if (f.dir && pathKey(dest).startsWith(pathKey(f.path))) throw new Error("A folder can't go inside itself.");
+        if (dest.length) await this.nest.mkdir(dest, this.all);
+        if (f.dir) await this.nest.relabel(rebase(this.all, f.path, [...dest, f.name]));
+        else await this.nest.relabel([{ file: f, meta: { ...f.meta, path: dest } }]);
+        this.say(`Moved to ${dest.length ? dest.join(' › ') : 'My nest'}.`, 'ok');
+        await this.refresh(true);
+      } catch (e) { this.say(e.message, 'err'); }
+    });
+  }
+
+  async star(f) {
+    if (!f) return;
+    try {
+      let target = f.dir ? f.entry : f;
+      if (f.dir && !target) { await this.nest.mkdir(f.path, this.all); await this.refresh(true); target = this.all.find((x) => x.kind === 'dir' && pathKey([...x.meta.path, x.meta.name]) === pathKey(f.path)); }
+      if (!target || !target.fileKey) return;
+      await this.nest.relabel([{ file: target, meta: { ...target.meta, star: !target.meta.star } }]);
+      this.say(target.meta.star ? 'Star removed.' : 'Starred.', 'ok');
+      await this.refresh(true);
+    } catch (e) { this.say(e.message, 'err'); }
+  }
+
+  async devicesPanel(f) {
+    if (!f || (f.dir && !under(this.all, f.path).length)) return;
+    try {
+      const list = (await this.nest.devices()).filter((d) => !d.me);
+      if (!list.length) return this.say('No other devices yet: sign in to pigeon on your phone or another computer first.', 'orange', 6000);
+      this.panel = { kind: 'devices', list, sel: 0, file: f };
+    } catch (e) { this.say(e.message, 'err'); }
+    this.dirty();
+  }
+
+  async deliver() {
+    const p = this.panel;
+    const d = p.list[p.sel];
+    const files = p.file.dir ? under(this.all, p.file.path).filter((x) => x.kind !== 'dir' && !x.trashed) : [p.file];
+    this.panel = null;
+    try {
+      await this.nest.http('deliver', { body: { ids: files.map((x) => x.id), to: d.did } });
+      this.say(`On its way to ${d.name}: it lands there by itself when pigeon is open.`, 'ok', 6000);
+      this.react('send', 1600);
+    } catch (e) { this.say(e.message, 'err'); }
+  }
+
+  async dashboard() {
+    try {
+      if (!this.dash) this.dash = await require('./dashboard').serve({ saveDir: downloads() });
+      else openFile(this.dash.url);
+      this.say('Opened your nest in the browser.', 'ok');
+    } catch (e) { this.say(e.message, 'err'); }
+  }
+
   // ── doing things ──────────────────────────────────────────────────────────
   send(text) {
     const paths = pathsIn(text);
     const bad = paths.filter((p) => !fs.existsSync(p));
     if (!paths.length) return;
     if (bad.length) return this.say(`Can't find ${bad[0]}`, 'err');
-    for (const p of paths) this.queue.push({ kind: 'send', path: p });
+    for (const p of paths) this.queue.push({ kind: 'send', path: p, folder: this.path });
     this.pump();
   }
 
   get(f) {
     if (!f) return;
+    if (f.dir) return this.go(f.path);
     this.queue.push({ kind: 'get', file: f });
     this.pump();
   }
@@ -144,14 +261,15 @@ class App {
     const onProgress = (d, t) => { this.job.done = d; this.job.total = t || 1; this.dirty(); };
     try {
       if (next.kind === 'send') {
-        await this.nest.send(next.path, { onProgress });
-        this.say(`Sent ${name} - it's waiting in your nest.`, 'ok');
+        await this.nest.send(next.path, { onProgress, folder: next.folder || [] });
+        this.say(`Sent ${name} - it's in your nest${next.folder && next.folder.length ? ' (' + next.folder.join(' › ') + ')' : ''}.`, 'ok');
         await this.refresh(true);
-        this.sel = 0;
       } else {
         const where = await this.nest.get(next.file, downloads(), { onProgress });
         this.lastSaved = where;
-        this.say(`Saved ${path.basename(where)} → ${where.replace(os.homedir(), '~')}   (o opens it)`, 'ok', 7000);
+        if (next.inbox) await this.nest.got(next.file, !!next.file.meta.drop).catch(() => {});
+        const from = next.inbox ? ` from ${(next.file.meta.from || 'another device').replace(/ \(web\)$/, '')}` : '';
+        this.say(`Saved ${path.basename(where)}${from} → ${where.replace(os.homedir(), '~')}   (o opens it)`, 'ok', 7000);
       }
       this.react('done', Coo.length('done'));
     } catch (e) {
@@ -165,7 +283,7 @@ class App {
   }
 
   async share(f) {
-    if (!f) return;
+    if (!f || f.dir) return;
     try {
       const s = await this.nest.share(f, 24);
       copy(s.url, this.ui.output);
@@ -175,15 +293,15 @@ class App {
 
   /** Wait for a file from your phone, and fetch it the moment it lands. */
   catch() {
-    const known = new Set(this.files.map((f) => f.id));
+    const known = new Set(this.all.map((f) => f.id));
     this.panel = { kind: 'catch', title: 'Waiting for your phone…', url: this.nest.site, note: 'Scan this with your phone, log in, and send something. It lands here by itself. (esc to stop)', caught: 0 };
     this.react('wait');
     clearInterval(this.catcher);
     this.catcher = setInterval(async () => {
       if (!this.panel || this.panel.kind !== 'catch') { clearInterval(this.catcher); return; }
       await this.refresh(true);
-      for (const f of this.files) {
-        if (known.has(f.id)) continue;
+      for (const f of this.all) {
+        if (known.has(f.id) || !f.done || f.kind === 'dir' || f.trashed || this.inboxSeen.has(f.id)) continue;
         known.add(f.id);
         this.panel.caught++;
         this.get(f);
@@ -193,11 +311,14 @@ class App {
 
   async remove(f) {
     if (!f) return;
-    if (this.armed !== f.id) { this.armed = f.id; this.say(`Press d again to delete ${f.meta.name}`, 'orange', 3000); setTimeout(() => { if (this.armed === f.id) this.armed = null; }, 3000); return; }
+    const k = keyOf(f);
+    if (this.armed !== k) { this.armed = k; this.say(`Press d again to move ${f.meta.name} to the trash`, 'orange', 3000); setTimeout(() => { if (this.armed === k) this.armed = null; }, 3000); return; }
     this.armed = null;
     try {
-      await this.nest.remove(f);
-      this.say(`Deleted ${f.meta.name}.`);
+      const list = f.dir ? under(this.all, f.path) : [f];
+      await this.nest.trash(list);
+      this.undo = list;
+      this.say(`Moved ${f.meta.name} to the trash.  (u undoes it)`, 'teal', 7000);
       await this.refresh(true);
     } catch (e) { this.say(e.message, 'err'); }
   }
@@ -236,6 +357,20 @@ class App {
   onKey(s, k) {
     if (k.ctrl && (k.name === 'c' || (k.name === 'd' && !this.target().text))) return this.quit();
     if (this.form) return this.formKey(s, k);
+    if (this.prompt) {
+      if (k.name === 'escape') this.prompt = null;
+      else if (k.name === 'return') { const p = this.prompt; this.prompt = null; p.done(p.ed.text); }
+      else edit(this.prompt.ed, s, k);
+      return this.dirty();
+    }
+    if (this.panel && this.panel.kind === 'devices') {
+      const p = this.panel;
+      if (k.name === 'up') p.sel = Math.max(0, p.sel - 1);
+      else if (k.name === 'down') p.sel = Math.min(p.list.length - 1, p.sel + 1);
+      else if (k.name === 'return') this.deliver();
+      else if (k.name === 'escape' || s === 'q') this.panel = null;
+      return this.dirty();
+    }
     if (this.panel) {
       if (k.name === 'escape' || k.name === 'return' || s === 'q') { this.panel = null; this.react('idle'); clearInterval(this.catcher); }
       return this.dirty();
@@ -248,7 +383,13 @@ class App {
         case 'l': this.share(f); return this.dirty();
         case 'c': this.catch(); return this.dirty();
         case 'd': this.remove(f); return this.dirty();
-        case 'r': this.refresh(); this.say('Refreshed.'); return;
+        case 'u': if (this.undo) { const list = this.undo; this.undo = null; this.nest.trash(list, true).then(() => { this.say('Put back.', 'ok'); this.refresh(true); }, (e) => this.say(e.message, 'err')); } return;
+        case 'n': this.newFolder(); return;
+        case 'r': this.rename(f); return;
+        case 'm': this.move(f); return;
+        case '*': this.star(f); return;
+        case 'p': this.devicesPanel(f); return;
+        case 'w': this.dashboard(); return;
         case 'o': if (this.lastSaved) openFile(this.lastSaved); else openFile(downloads()); return;
         case 's': this.say('Drop a file or folder onto this window, or type its path and press Enter.', 'teal', 6000); return;
         case 't': { const n = Th.name() === 'sky' ? 'dusk' : 'sky'; Th.use(n); this.cfg = { ...session.load(), theme: n }; session.save(this.cfg); this.ui.setPaper(Th.t().paper); return; }
@@ -259,12 +400,15 @@ class App {
     }
     switch (k.name) {
       case 'return': if (this.ed.text.trim()) { const t = this.ed.text; this.ed.clear(); this.send(t); } else this.get(f); break;
-      case 'up': if (empty) this.move(-1); break;
-      case 'down': if (empty) this.move(1); break;
-      case 'pageup': this.move(-10); break;
-      case 'pagedown': this.move(10); break;
+      case 'up': if (empty) this.moveSel(-1); break;
+      case 'down': if (empty) this.moveSel(1); break;
+      case 'pageup': this.moveSel(-10); break;
+      case 'pagedown': this.moveSel(10); break;
       case 'escape': this.ed.clear(); break;
-      default: edit(this.ed, s, k);
+      case 'backspace': if (empty && this.path.length) { this.go(this.path.slice(0, -1)); break; } edit(this.ed, s, k); break;
+      case 'left': if (empty && this.path.length) { this.go(this.path.slice(0, -1)); break; } edit(this.ed, s, k); break;
+      case 'right': if (empty && f && f.dir) { this.go(f.path); break; } edit(this.ed, s, k); break;
+      default: if (k.ctrl && k.name === 'r') { this.refresh(); this.say('Refreshed.'); break; } edit(this.ed, s, k);
     }
     this.dirty();
   }
@@ -279,7 +423,7 @@ class App {
     this.dirty();
   }
 
-  move(step) {
+  moveSel(step) {
     if (!this.files.length) return;
     this.sel = Math.max(0, Math.min(this.files.length - 1, this.sel + step));
     this.armed = null;
@@ -294,7 +438,8 @@ class App {
     if (this.job && this.mood.scene !== this.job.kind) this.react(this.job.kind);
     const host = this.nest.site.replace(/^https?:\/\//, '');
     const right = this.nest.in && !this.form ? Th.dim(`${this.nest.name} · ${host}`) : Th.dim(host);
-    const used = this.quota ? `${this.files.length} file${this.files.length === 1 ? '' : 's'} · ${size(this.used)} of ${size(this.quota)}` : '';
+    const count = this.all.filter((x) => !x.trashed && x.done && x.kind !== 'dir').length;
+    const used = this.quota ? `${count} file${count === 1 ? '' : 's'} · ${size(this.used)} of ${size(this.quota)}` : '';
     const meter = this.quota ? '  ' + Th.teal(bar(this.used / this.quota, 12, '━', '─').replace(/─+$/, (m) => Th.line(m))) : '';
     const status = this.job
       ? Th[this.job.kind === 'send' ? 'violet' : 'teal'](`${this.job.kind === 'send' ? 'sending' : 'fetching'} ${this.job.name}`) + '  ' + Th.dim(bar(this.job.done / this.job.total, 16, '█', '░')) + Th.dim(`  ${Math.round((100 * this.job.done) / this.job.total)}%`) + (this.queue.length ? Th.faint(`  +${this.queue.length} waiting`) : '')
@@ -317,9 +462,16 @@ class App {
       lines.push(' ' + Th.dim(this.form.msg ? '' : 'tab or ↓ next field · enter continue · esc quit'));
       cursor = this.formCursor;
     } else {
-      const lay = this.ed.layout(W - 5, 1);
-      lines.push(' ' + Th.teal('› ', { bold: true }) + (this.ed.text ? lay.lines[0] : Th.faint('drop a file or folder here, or type its path (enter sends)')));
-      if (!this.panel) cursor = { row: lines.length - 1, col: 3 + lay.col };
+      if (this.prompt) {
+        const label = this.prompt.label + ': ';
+        const lay = this.prompt.ed.layout(Math.max(10, W - 5 - A.vwidth(label)), 1);
+        lines.push(' ' + Th.violet(label, { bold: true }) + lay.lines[0]);
+        cursor = { row: lines.length - 1, col: 1 + A.vwidth(label) + lay.col };
+      } else {
+        const lay = this.ed.layout(W - 5, 1);
+        lines.push(' ' + Th.teal('› ', { bold: true }) + (this.ed.text ? lay.lines[0] : Th.faint(`drop files here to send them${this.path.length ? ' into ' + this.path[this.path.length - 1] : ''}, or type a path`)));
+        if (!this.panel) cursor = { row: lines.length - 1, col: 3 + lay.col };
+      }
     }
     lines.push(this.hint(W));
     return { lines, cursor };
@@ -328,33 +480,49 @@ class App {
   hint(W) {
     const t = Th.t();
     if (this.flash) return ' ' + A.paint(A.clip(this.flash.text, W - 2), { fg: t[this.flash.kind] || t.teal });
-    const opts = this.form ? [''] : this.panel ? ['esc close']
-      : ['enter save · l link + QR · c catch from phone · d delete · o open · t colours · ? keys · q quit', 'enter save · l link · c catch · d delete · ? keys · q quit', 'enter save · ? keys · q quit'];
+    const f = this.files[this.sel];
+    const enter = f && f.dir ? 'enter open' : 'enter save';
+    const opts = this.form ? [''] : this.prompt ? ['enter ok · esc cancel'] : this.panel ? [this.panel.kind === 'devices' ? '↑↓ pick · enter send · esc cancel' : 'esc close']
+      : [`${enter} · ← back · l link · p send to device · n folder · r rename · m move · d delete · w browser · ? keys`, `${enter} · l link · p send to device · d delete · ? keys · q quit`, `${enter} · ? keys · q quit`];
     for (const o of opts) if (A.vwidth(o) + 2 <= W) return ' ' + Th.dim(o);
     return ' ' + Th.dim(A.clip(opts[opts.length - 1], W - 2));
   }
 
   listLines(W, h) {
     const out = [];
+    const crumb = ['My nest', ...this.path].join(' › ');
+    out.push(' ' + A.paint(A.clip(crumb, W - 4), { bold: true }) + (this.path.length ? Th.faint('   ← back') : ''));
     if (!this.files.length) {
-      out.push('', '  ' + A.paint('Your nest is empty.', { bold: true }), '');
-      out.push('  ' + Th.dim('Send something: drop a file or folder onto this window, or type its path below.'));
-      out.push('  ' + Th.dim('From your phone: press ') + Th.teal('c') + Th.dim(' and scan the code, or open ') + Th.link(this.nest.site));
+      out.push('');
+      if (this.path.length) out.push('  ' + Th.dim('This folder is empty. Drop files onto this window to send them here.'));
+      else {
+        out.push('  ' + A.paint('Your nest is empty.', { bold: true }), '');
+        out.push('  ' + Th.dim('Send something: drop a file or folder onto this window, or type its path below.'));
+        out.push('  ' + Th.dim('From your phone: press ') + Th.teal('c') + Th.dim(' and scan the code, or open ') + Th.link(this.nest.site));
+      }
       return out;
     }
-    out.push('');
+    const rows = h - 1;
     if (this.sel < this.top) this.top = this.sel;
-    if (this.sel >= this.top + h - 1) this.top = this.sel - h + 2;
+    if (this.sel >= this.top + rows - 1) this.top = this.sel - rows + 2;
     const nameW = Math.max(12, W - 62);
     for (let i = this.top; i < this.files.length && out.length < h; i++) {
       const f = this.files[i];
       const on = i === this.sel;
+      const pick = on ? Th.teal(' › ', { bold: true }) : '   ';
+      const star = f.meta.star ? A.paint(' ★', { fg: '#f2b33d' }) : '';
+      if (f.dir) {
+        const chip = A.paint(' ▤    ', { fg: '#ffffff', bg: Th.t().teal, bold: true });
+        const n = under(this.all, f.path).filter((x) => x.kind !== 'dir' && !x.trashed).length;
+        out.push(pick + chip + '  ' + fit(A.paint(A.clip(f.name + '/', nameW - 2), on ? { bold: true } : {}) + star, nameW) + '  ' + Th.dim(`${n} file${n === 1 ? '' : 's'}`.padStart(8)) + (this.armed === keyOf(f) ? '  ' + Th.err('press d again') : ''));
+        continue;
+      }
       const [tag, col] = tagOf(f.meta);
       const chip = A.paint(` ${tag.padEnd(4)} `, { fg: '#ffffff', bg: Th.t()[col] || Th.t().dim, bold: true });
-      const name = A.paint(A.clip(f.meta.name + (f.meta.kind === 'folder' ? '/' : ''), nameW), on ? { bold: true } : {});
+      const name = A.paint(A.clip(f.meta.name + (f.meta.kind === 'folder' ? '/' : ''), nameW - 2), on ? { bold: true } : {}) + star;
       const fromWho = Th.dim(A.clip('from ' + (f.meta.from || f.device || '?').replace(/ \(web\)$/, ''), 22).padEnd(22));
-      const line = (on ? Th.teal(' › ', { bold: true }) : '   ') + chip + '  ' + fit(name, nameW) + '  ' + Th.dim(size(f.size).padStart(8)) + '  ' + fromWho + '  ' + Th.faint(ago(f.made));
-      out.push(this.armed === f.id ? line + '  ' + Th.err('press d again to delete') : line);
+      const line = pick + chip + '  ' + fit(name, nameW) + '  ' + Th.dim(size(f.size).padStart(8)) + '  ' + fromWho + '  ' + Th.faint(ago(f.made));
+      out.push(this.armed === keyOf(f) ? line + '  ' + Th.err('press d again') : line);
     }
     return out;
   }
@@ -363,9 +531,21 @@ class App {
     const p = this.panel;
     const out = [''];
     if (p.kind === 'help') {
-      const rows = [['enter', 'save the highlighted file here (or in Downloads)'], ['↑ ↓', 'pick a file'], ['l', 'make a link + QR code for it (24 hours)'], ['c', 'catch: wait for a file from your phone, and save it the moment it lands'],
-        ['d d', 'delete it'], ['o', 'open what you just saved'], ['r', 'refresh'], ['t', 'light / dark'], ['x', 'log out'], ['q', 'quit'], ['', ''], ['drop', 'drag a file or folder onto this window to send it'], ['type', 'or type a path and press enter (folders skip node_modules, .git…)']];
-      for (const [k, d] of rows) out.push('  ' + Th.teal(k.padEnd(6), { bold: true }) + ' ' + Th.dim(d));
+      const rows = [['enter', 'open a folder, or save a file here (or in Downloads)'], ['← →', 'back out of a folder / into one'], ['l', 'make a link + QR code for it (24 hours)'],
+        ['p', 'send it to another device: it lands there by itself'], ['c', 'catch: wait for a file from your phone, and save it the moment it lands'],
+        ['n', 'new folder'], ['r', 'rename'], ['m', 'move to another folder'], ['*', 'star'], ['d d', 'move to the trash (u undoes it)'],
+        ['o', 'open what you just saved'], ['w', 'open your nest in the browser, already signed in'], ['t', 'light / dark'], ['x', 'log out'], ['q', 'quit'], ['', ''],
+        ['drop', 'drag files or folders onto this window to send them into this folder'], ['type', 'or type a path and press enter (folders skip node_modules, .git…)']];
+      for (const [k, d] of rows.slice(0, h - 1)) out.push('  ' + Th.teal(k.padEnd(6), { bold: true }) + ' ' + Th.dim(d));
+      return out;
+    }
+    if (p.kind === 'devices') {
+      out.push('  ' + A.paint(`Send ${p.file.meta.name} to…`, { bold: true }), '');
+      p.list.forEach((d, i) => {
+        const live = Date.now() - d.seen < 120000;
+        out.push((i === p.sel ? Th.teal(' › ', { bold: true }) : '   ') + A.paint(fit(d.name, 34), i === p.sel ? { bold: true } : {}) + '  ' + (live ? Th.ok('online now') : Th.dim('last seen ' + ago(d.seen))));
+      });
+      out.push('', '  ' + Th.dim('It lands on that device by itself the next time pigeon (or pigeon in the browser) is open there.'));
       return out;
     }
     let qr = [];
@@ -396,6 +576,18 @@ class App {
     if (f.msg) out.push('  ' + (/^Unlocking/.test(f.msg) ? Th.violet(f.msg) : Th.orange(f.msg)));
     return out;
   }
+}
+
+const keyOf = (f) => (f.dir ? 'd:' + pathKey(f.path) : 'f:' + f.id);
+
+/** New labels for everything in a folder that moves (or is renamed) from `from` to `to`. */
+function rebase(all, from, to) {
+  return under(all, from).filter((f) => f.fileKey).map((f) => {
+    const meta = { ...f.meta };
+    if (f.kind === 'dir' && pathKey([...f.meta.path, f.meta.name]) === pathKey(from)) { meta.name = to[to.length - 1]; meta.path = to.slice(0, -1); }
+    else meta.path = [...to, ...f.meta.path.slice(from.length)];
+    return { file: f, meta };
+  });
 }
 
 function wrap(text, w) {

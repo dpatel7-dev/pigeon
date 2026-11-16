@@ -12,19 +12,26 @@ const { size, ago, bar } = require('./tui');
 const pkg = require('../package.json');
 
 const HELP = `
-  pigeon ${pkg.version} - move files between your devices, locked on the way
+  pigeon ${pkg.version} - your own locked drive, and files that fly between your devices
 
-  pigeon                       open your nest (drop files onto the window to send)
-  pigeon send <file|folder>…   send things to your nest (folders skip node_modules, .git…)
-  pigeon get [name]            save the newest file here (or the one whose name matches)
-  pigeon ls                    what's in your nest
-  pigeon link <name>           a link + QR code anyone can open for 24 hours
-  pigeon catch                 wait for a file from your phone and save it when it lands
-  pigeon open <link>           save a file someone sent you as a pigeon link
-  pigeon rm <name>             delete from your nest
-  pigeon login                 log in (or make a nest)      pigeon logout
-  pigeon site <address>        use a different pigeon website
-  pigeon update · pigeon uninstall · pigeon --version
+  pigeon                         open your nest (drop files onto the window to send them)
+  pigeon dashboard               open your nest in the browser, already signed in
+  pigeon send <file|folder>…     send things to your nest (folders skip node_modules, .git…)
+      --into Projects/game       …into a folder in your nest
+      --to <device>              …straight to another device (it saves them by itself)
+  pigeon get [name]              save the newest file here (or the one whose name matches)
+  pigeon ls [folder]             what's in your nest (or in one folder)
+  pigeon mkdir <folder>          make a folder         pigeon mv <name> <folder>   move something
+  pigeon link <name>             a link + QR code anyone can open for 24 hours
+  pigeon devices                 every device signed in to your nest
+  pigeon catch                   wait for files (from your phone, or sent to this computer) and save them
+  pigeon sync [folder]           keep a copy of your nest in a folder (default ~/Pigeon)
+      --watch                    …and keep it up to date while it runs
+      --down                     …only download, never upload
+  pigeon open <link>             save a file someone sent you as a pigeon link
+  pigeon rm <name>               move something to the trash
+  pigeon invite                  an invite code for someone to make their own nest (site owner)
+  pigeon login · logout · whoami · site <address> · update · uninstall · --version
 `;
 
 const say = (s = '') => process.stdout.write(s + '\n');
@@ -52,6 +59,14 @@ async function login(nest) {
   const name = (await ask('  Nest name: ')).trim().toLowerCase();
   const pw = await ask('  Password: ', { hidden: true });
   let r = await nest.enter(name, pw, { make: 'ask' });
+  if (r === 'invite') {
+    say(`  There's no nest called "${name}" yet, and this site needs an invite code to make one.`);
+    const code = (await ask('  Invite code (from the site\'s owner): ')).trim();
+    if (!code) throw new Error('No invite code, so no new nest.');
+    const again = await ask('  Password again: ', { hidden: true });
+    if (again !== pw) throw new Error("The two passwords don't match.");
+    r = await nest.enter(name, pw, { make: true, invite: code });
+  }
   if (r === 'new') {
     say(`  There's no nest called "${name}" yet - let's make it.`);
     const again = await ask('  Password again: ', { hidden: true });
@@ -82,6 +97,27 @@ function showQr(url) {
   } catch { /* too long for a QR code: the link is printed anyway */ }
 }
 
+/** Pull --flag value / --flag out of the arguments. */
+function opts(args, withValue = [], flags = []) {
+  const out = { rest: [] };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i].replace(/^--?/, '');
+    if (args[i].startsWith('-') && withValue.includes(a)) out[a] = args[++i];
+    else if (args[i].startsWith('-') && flags.includes(a)) out[a] = true;
+    else out.rest.push(args[i]);
+  }
+  return out;
+}
+const folderOf = (s) => String(s || '').split('/').map((x) => x.trim()).filter(Boolean);
+
+async function findDevice(nest, want) {
+  const list = (await nest.devices()).filter((d) => !d.me);
+  const w = String(want || '').toLowerCase();
+  const d = list.find((x) => x.name.toLowerCase() === w) || list.find((x) => x.name.toLowerCase().includes(w));
+  if (!d) throw new Error(`No device called "${want}". Your devices: ${list.map((x) => x.name).join(', ') || '(none yet)'}`);
+  return d;
+}
+
 async function main(argv) {
   const [cmd, ...rest] = argv;
   Th.use(session.load().theme || 'sky');
@@ -104,19 +140,79 @@ async function main(argv) {
       return;
     }
     case 'send': case 'up': case 'put': {
-      if (!rest.length) throw new Error('What should I send? pigeon send photo.jpg');
-      for (const p of rest) if (!fs.existsSync(p)) throw new Error(`Can't find ${p}`);
+      const o = opts(rest, ['into', 'to'], ['drop']);
+      if (!o.rest.length) throw new Error('What should I send? pigeon send photo.jpg');
+      for (const p of o.rest) if (!fs.existsSync(p)) throw new Error(`Can't find ${p}`);
       const nest = await ready();
-      for (const p of rest) {
-        const r = await nest.send(p, { onProgress: progress(`sending ${path.basename(p)}`) });
-        say(`  ${Th.ok('✓')} ${r.meta.name}${r.meta.kind === 'folder' ? '/' : ''} is in your nest.`);
+      const folder = folderOf(o.into);
+      const to = o.to ? await findDevice(nest, o.to) : null;
+      if (folder.length) await nest.mkdir(folder);
+      for (const p of o.rest) {
+        const r = await nest.send(p, { folder, to: to && to.did, drop: !!o.drop, onProgress: progress(`sending ${path.basename(p)}`) });
+        say(`  ${Th.ok('✓')} ${r.meta.name}${r.meta.kind === 'folder' ? '/' : ''} ${to ? `is on its way to ${to.name}` : `is in your nest${folder.length ? ' (' + folder.join(' › ') + ')' : ''}`}.`);
       }
+      return;
+    }
+    case 'mkdir': {
+      const folder = folderOf(rest.join(' '));
+      if (!folder.length) throw new Error('Usage: pigeon mkdir Projects/game');
+      const nest = await ready();
+      await nest.mkdir(folder);
+      say(`  ${Th.ok('✓')} ${folder.join(' › ')}/`);
+      return;
+    }
+    case 'mv': case 'move': {
+      if (rest.length < 2) throw new Error('Usage: pigeon mv <name> <folder>   (folder "/" is the top of your nest)');
+      const nest = await ready();
+      const { files } = await nest.list();
+      const f = pick(files.filter((x) => x.done && !x.trashed && x.kind !== 'dir'), rest.slice(0, -1).join(' '));
+      if (!f) throw new Error(`Nothing in your nest matches "${rest.slice(0, -1).join(' ')}".`);
+      const dest = folderOf(rest[rest.length - 1]);
+      if (dest.length) await nest.mkdir(dest, files);
+      await nest.relabel([{ file: f, meta: { ...f.meta, path: dest } }]);
+      say(`  ${Th.ok('✓')} ${f.meta.name} → ${dest.length ? dest.join(' › ') : 'My nest'}`);
+      return;
+    }
+    case 'devices': {
+      const nest = await ready();
+      for (const d of await nest.devices()) say(`  ${d.me ? Th.teal('●') : Date.now() - d.seen < 120000 ? Th.ok('●') : Th.dim('○')} ${d.name.padEnd(34)} ${Th.dim(d.me ? 'this one' : Date.now() - d.seen < 120000 ? 'online now' : 'last seen ' + ago(d.seen))}${d.waiting ? Th.violet(`  ${d.waiting} waiting for it`) : ''}`);
+      say(Th.dim('\n  Send straight to one: pigeon send photo.jpg --to "' + 'iPhone"'));
+      return;
+    }
+    case 'dashboard': case 'web': case 'browser': {
+      await ready();
+      const { serve } = require('./dashboard');
+      const d = await serve({ saveDir: downloads() });
+      say(`\n  Your nest is open in the browser: ${d.url}\n  ${Th.dim('Files you save land in ' + downloads().replace(require('os').homedir(), '~') + '. Keep this window open while you use it (Ctrl+C to stop).')}\n`);
+      await new Promise(() => {});
+      return;
+    }
+    case 'sync': {
+      const o = opts(rest, [], ['watch', 'down']);
+      const nest = await ready();
+      const { syncOnce, defaultRoot } = require('./sync');
+      const root = path.resolve(o.rest[0] || defaultRoot());
+      say(`  Keeping a copy of your nest in ${root.replace(require('os').homedir(), '~')}${o.down ? ' (download only)' : ''}`);
+      const onEvent = (e) => say(e.kind === 'error' ? `  ${Th.err('!')} ${e.name}: ${e.error}` : `  ${e.kind === 'down' ? Th.teal('↓') : Th.violet('↑')} ${e.name}`);
+      for (;;) {
+        try {
+          const c = await syncOnce(nest, root, { up: !o.down, onEvent });
+          if (!o.watch) { say(Th.dim(`  Done: ${c.down} down, ${c.up} up.`)); return; }
+        } catch (e) { if (!o.watch) throw e; say(Th.dim(`  (${e.message} - trying again soon)`)); }
+        await new Promise((r) => setTimeout(r, 20000));
+      }
+    }
+    case 'invite': {
+      const nest = await ready();
+      const r = await nest.invite();
+      say(`\n  Invite code: ${A.paint(r.code.slice(0, 4) + '-' + r.code.slice(4), { bold: true })}   (one new nest, works for 7 days)`);
+      say(`  Or send them this link: ${nest.site}/#invite=${r.code}\n`);
       return;
     }
     case 'get': case 'down': case 'pull': {
       const nest = await ready();
       const { files } = await nest.list();
-      const done = files.filter((f) => f.done);
+      const done = files.filter((f) => f.done && !f.trashed && f.kind !== 'dir');
       if (!done.length) { say('  Your nest is empty.'); return; }
       const f = pick(done, rest.join(' '));
       if (!f) throw new Error(`Nothing in your nest matches "${rest.join(' ')}". See: pigeon ls`);
@@ -127,16 +223,20 @@ async function main(argv) {
     case 'ls': case 'list': {
       const nest = await ready();
       const r = await nest.list();
-      const done = r.files.filter((f) => f.done);
-      if (!done.length) say('  Your nest is empty.');
-      done.forEach((f, i) => say(`  ${String(i + 1).padStart(2)}  ${(f.meta.name + (f.meta.kind === 'folder' ? '/' : '')).slice(0, 40).padEnd(41)} ${size(f.size).padStart(8)}  ${Th.dim(('from ' + (f.meta.from || '?')).slice(0, 24).padEnd(25))} ${Th.dim(ago(f.made))}`));
+      const { inside } = require('./nest');
+      const folder = folderOf(rest.join(' '));
+      const { dirs, files: here } = inside(r.files, folder);
+      if (folder.length) say(Th.dim(`  ${['My nest', ...folder].join(' › ')}`));
+      if (!dirs.length && !here.length) say(folder.length ? '  This folder is empty.' : '  Your nest is empty.');
+      for (const d of dirs) say(`      ${Th.teal(d.name + '/')}`);
+      here.sort((a, b) => b.made - a.made).forEach((f, i) => say(`  ${String(i + 1).padStart(2)}  ${(f.meta.name + (f.meta.kind === 'folder' ? '/' : '') + (f.meta.star ? ' ★' : '')).slice(0, 40).padEnd(41)} ${size(f.size).padStart(8)}  ${Th.dim(('from ' + (f.meta.from || '?')).slice(0, 24).padEnd(25))} ${Th.dim(ago(f.made))}`));
       say(Th.dim(`\n  ${size(r.used)} of ${size(r.quota)} used`));
       return;
     }
     case 'link': case 'share': {
       const nest = await ready();
       const { files } = await nest.list();
-      const f = pick(files.filter((x) => x.done), rest.filter((x) => !/^--/.test(x)).join(' '));
+      const f = pick(files.filter((x) => x.done && !x.trashed && x.kind !== 'dir'), rest.filter((x) => !/^--/.test(x)).join(' '));
       if (!f) throw new Error('Which file? pigeon link <name>');
       const s = await nest.share(f, 24);
       say(`\n  ${A.paint(f.meta.name, { bold: true })} · anyone with this link can download it for 24 hours:\n`);
@@ -147,16 +247,20 @@ async function main(argv) {
     case 'catch': case 'wait': {
       const nest = await ready();
       const known = new Set((await nest.list()).files.map((f) => f.id));
-      say(`\n  Waiting for a file. On your phone, scan this (or open ${nest.site}) and send something:\n`);
+      const seen = new Set();
+      say(`\n  Waiting for files. On your phone, scan this (or open ${nest.site}) and send something.\n  Files other devices send straight to this computer land here too:\n`);
       showQr(nest.site);
       say(Th.dim('\n  (Ctrl+C to stop)\n'));
       for (;;) {
         await new Promise((r) => setTimeout(r, 2000));
-        let files;
-        try { ({ files } = await nest.list()); } catch { continue; }
-        for (const f of files.filter((x) => x.done && !known.has(x.id))) {
+        let files, inbox;
+        try { ({ files } = await nest.list()); inbox = await nest.inbox(); } catch { continue; }
+        for (const f of inbox.concat(files.filter((x) => x.done && !x.trashed && x.kind !== 'dir' && !known.has(x.id)))) {
           known.add(f.id);
+          if (seen.has(f.id)) continue;
+          seen.add(f.id);
           const where = await nest.get(f, downloads(), { onProgress: progress(`catching ${f.meta.name}`) });
+          if (f.to) await nest.got(f, !!f.meta.drop).catch(() => {});
           say(`  ${Th.ok('✓')} ${where}`);
         }
       }
@@ -170,10 +274,10 @@ async function main(argv) {
     case 'rm': case 'delete': {
       const nest = await ready();
       const { files } = await nest.list();
-      const f = pick(files, rest.join(' '));
+      const f = pick(files.filter((x) => !x.trashed && x.kind !== 'dir'), rest.join(' '));
       if (!f || !rest.length) throw new Error('Which file? pigeon rm <name>');
-      await nest.remove(f);
-      say(`  Deleted ${f.meta.name}.`);
+      await nest.trash([f]);
+      say(`  Moved ${f.meta.name} to the trash. (It's deleted for good after 30 days; put it back from the trash in pigeon dashboard.)`);
       return;
     }
     case 'update': return update();
