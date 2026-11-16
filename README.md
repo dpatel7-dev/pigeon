@@ -90,7 +90,7 @@ door; `"open"` lets anyone make one; `"closed"` lets no one. `quota_mb` is the t
 ## Part of a family
 
 - [gossip](https://github.com/dpatel7-dev/gossip) — end-to-end encrypted terminal chat
-- [Tree of Thought](https://github.com/dpatel7-dev/Terminal-Of-Though-ToT-) — many AI models in one terminal garden
+- [Tree of Thought](https://github.com/dpatel7-dev/Tree-Of-Thought) — many AI models in one terminal garden
 - [Project CLI Access](https://github.com/dpatel7-dev/Project-CLI-Access) — one command to open them all
 
 Development: `npm test` (Node 18+, Python 3; no dependencies).
