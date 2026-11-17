@@ -97,7 +97,7 @@ test('a nest end to end: make, send a big file and a folder, get them back, shar
   await assert.rejects(new Nest({ site }).enter('mallory', 'pw123456', { make: true }), /invite code/);
   assert.equal(await new Nest({ site }).enter('mallory', 'pw123456'), 'invite', 'asks for an invite instead of failing');
   fs.writeFileSync(path.join(src, 'huge.bin'), crypto.randomBytes(25 * 1024 * 1024));
-  await assert.rejects(phone.send(path.join(src, 'huge.bin')), /no room left/);
+  await assert.rejects(phone.send(path.join(src, 'huge.bin')), /is full/);
 
   await phone.remove(files.find((f) => f.meta.name === 'big.bin'));
   assert.equal((await phone.list()).files.length, 1);
@@ -172,6 +172,34 @@ test('a drive: folders, rename, move, stars, trash, devices, sending to a device
   process.env.PIGEON_HOME = path.join(tmp, 'home6');
   await assert.rejects(new Nest({ site }).enter('friend.two', 'friendpw', { make: true, invite: inv.code }), /doesn't work/);
   assert.equal((await friend.list()).files.length, 0, "a friend's nest is their own");
+});
+
+test("space: each invited nest has its own share, and the owner can give more room or remove a nest", async () => {
+  process.env.PIGEON_HOME = path.join(tmp, 'home-space-owner');
+  const owner = new Nest({ site });
+  assert.equal(await owner.enter('dhruv', 'hunter22'), 'in');
+  const inv = await owner.invite();
+  process.env.PIGEON_HOME = path.join(tmp, 'home-space-guest');
+  const guest = new Nest({ site });
+  assert.equal(await guest.enter('guest.nest', 'guestpw1', { make: true, invite: inv.code }), 'made');
+  await assert.rejects(guest.http('people', { body: {} }), /owner/);
+  let p = await owner.http('people', { body: {} });
+  const row = p.nests.find((n) => n.nest === 'guest.nest');
+  assert.ok(row && !row.owner && row.used === 0);
+  assert.ok(p.nests.find((n) => n.nest === 'dhruv').owner);
+  // give the guest just 1 MB: a 2 MB file no longer fits in their nest
+  p = await owner.http('people', { body: { do: 'limit', nest: 'guest.nest', mb: 1 } });
+  assert.equal(p.nests.find((n) => n.nest === 'guest.nest').limit, 1024 * 1024);
+  const f = path.join(tmp, 'two-mb.bin');
+  fs.writeFileSync(f, crypto.randomBytes(2 * 1024 * 1024 + 5));
+  await assert.rejects(guest.send(f), /Your nest is full/);
+  const mine = await guest.list();
+  assert.equal(mine.quota, 1024 * 1024, 'the guest sees their own share');
+  // removing a nest deletes it and its files
+  await assert.rejects(owner.http('people', { body: { do: 'remove', nest: 'dhruv' } }), /your own nest/);
+  p = await owner.http('people', { body: { do: 'remove', nest: 'guest.nest' } });
+  assert.ok(!p.nests.some((n) => n.nest === 'guest.nest'));
+  await assert.rejects(guest.list(), /log/i);
 });
 
 test('keeping a copy in a folder (sync), both ways', async () => {

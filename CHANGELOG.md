@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0
+- Fair space: every invited nest gets its own share (100 MB unless the owner gives it more), so one person can't fill the site for everyone. The whole site still never goes past its total.
+- People and space (owner only, in the browser under your name): how much each nest uses, more room for a nest, or remove one.
+- When the site is nearly full, the trash empties after 3 days instead of 30, and the space line says so.
+- Clearer messages: "your nest is full" and "this site is full" are told apart.
+
 ## 2.1.0
 - A new look in the browser that matches gossip and Tree of Thought: the terminal's font, panels with their names in the border, airmail stripes, and postage stamps for files. Dark or light (it follows your computer, or the moon/sun button).
 - Paste to upload: copy a screenshot or a file and press Ctrl/⌘+V in pigeon. Pasting text makes a note.
