@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0
+- A new look in the browser that matches gossip and Tree of Thought: the terminal's font, panels with their names in the border, airmail stripes, and postage stamps for files. Dark or light (it follows your computer, or the moon/sun button).
+- Paste to upload: copy a screenshot or a file and press Ctrl/⌘+V in pigeon. Pasting text makes a note.
+- New notes (New → New note): text you want on your other devices, like a link or some code.
+- Press ? for every keyboard shortcut.
+- The transfer tray tucks itself away once everything has landed, and sits above the bottom bar on phones.
+- Devices show a phone, browser or terminal icon.
+
 ## 2.0.0
 - pigeon is a drive now: folders, rename, move, stars, search, previews (photos, video, audio, PDF, text), shared links and a trash with undo. Names and folders stay locked; the website still can't read them.
 - Send to a device: pick one of your signed-in devices and the file lands there by itself (terminal: `p`, `pigeon send --to`; browser: Send to a device).
