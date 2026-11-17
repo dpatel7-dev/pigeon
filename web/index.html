@@ -1442,7 +1442,7 @@ dialog::backdrop { background: rgba(8, 11, 16, .5); }
     var bar = function (part) { var n = Math.max(0, Math.min(16, Math.round(part * 16))); return '<span style="color:var(--teal)">' + '█'.repeat(n) + '</span><span style="color:var(--border)">' + '░'.repeat(16 - n) + '</span>'; };
     var ago = function (ms) { if (!ms) return 'never'; var d = (Date.now() - ms) / 86400000; return d < 1 ? 'today' : d < 2 ? 'yesterday' : Math.round(d) + ' days ago'; };
     var body = $('dlgBody');
-    body.innerHTML = '<h3>People and space</h3><div class="sub">Everyone\'s files together: <b>' + size(r.used) + '</b> of ' + size(r.quota) + '. Each invited nest can use ' + size(r.nestDefault) + ' unless you give it more. You can see how much each nest uses, never what\'s in it.' + (r.disk ? ' The disk has ' + size(r.disk.free) + ' free.' : '') + '</div>' +
+    body.innerHTML = '<h3>People and space</h3><div class="sub">Everyone\'s files together: <b>' + size(r.used) + '</b> of ' + size(r.quota) + '. Each invited nest can use ' + size(r.nestDefault) + ' unless you give it more. You can see how much each nest uses, never what\'s in it.</div>' +
       '<div style="max-height:50vh;overflow:auto"><table style="width:100%;border-collapse:collapse">' + r.nests.map(function (n) {
         return '<tr style="border-top:1px dashed var(--border)"><td style="padding:.45em 1ch .45em 0"><b>' + esc(n.nest) + '</b>' + (n.owner ? ' <span class="badge">you</span>' : '') + '<div class="small">' + n.files + ' files · last seen ' + ago(n.seen) + '</div></td>' +
           '<td style="padding:.45em 1ch;white-space:nowrap">' + bar(n.limit ? n.used / n.limit : 0) + '<div class="small">' + size(n.used) + ' of ' + size(n.limit) + '</div></td>' +

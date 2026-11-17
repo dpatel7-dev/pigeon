@@ -293,13 +293,9 @@ class Pigeon:
             n = self.one("SELECT COUNT(*) AS n FROM files WHERE nest = ? AND kind != 'dir'", r['name'])['n']
             rows.append({'nest': r['name'], 'owner': bool(r['owner']), 'used': self.used(r['name']), 'limit': self.limit_of(r['name']),
                          'files': n, 'made': r['made'], 'seen': seen})
-        disk = None
-        try:
-            du = shutil.disk_usage(self.dir)
-            disk = {'free': du.free, 'total': du.total}
-        except OSError:
-            pass
-        return {'nests': rows, 'used': self.used(), 'quota': self.quota, 'nestDefault': self.nest_default, 'disk': disk}
+        # (no disk-free figure: on shared hosts like PythonAnywhere it shows the whole
+        # server's disk, not your own allowance, so it would only mislead)
+        return {'nests': rows, 'used': self.used(), 'quota': self.quota, 'nestDefault': self.nest_default}
 
     def invite(self, nest):
         if not self._owner(nest):
