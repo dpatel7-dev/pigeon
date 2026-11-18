@@ -97,7 +97,7 @@ class Nest {
 
   // ── accounts ──────────────────────────────────────────────────────────────
   /** Log in, or make the nest if it doesn't exist yet. Returns 'in', 'made', or 'new' (make: 'ask'). */
-  async enter(name, password, { make = 'ask', invite = '' } = {}) {
+  async enter(name, password, { make = 'ask' } = {}) {
     name = String(name || '').toLowerCase().trim();
     const hi = await this.http('hello', { body: { nest: name }, auth: false });
     if (hi.exists) {
@@ -107,17 +107,12 @@ class Nest {
       this.save();
       return 'in';
     }
-    if (!hi.canMake && !invite) {
-      if (make === 'ask' && hi.invites) return 'invite';
-      throw new PigeonError(hi.invites
-        ? `There's no nest called "${name}" here, and this site needs an invite code for new nests. Ask the site's owner for one.`
-        : `There's no nest called "${name}" here, and this site isn't taking new nests.`);
-    }
+    if (!hi.canMake) throw new PigeonError(`There's no nest called "${name}" here, and this site isn't taking new nests right now.`);
     if (make === false) throw new PigeonError(`There's no nest called "${name}" yet.`);
     if (make === 'ask') return 'new';
     const salt = C.newSalt();
     const k = await C.stretch(password, salt);
-    const r = await this.http('signup', { body: { nest: name, salt, proof: k.proof, device: device(), did: this.did, invite }, auth: false });
+    const r = await this.http('signup', { body: { nest: name, salt, proof: k.proof, device: device(), did: this.did }, auth: false });
     Object.assign(this, { name, token: r.token, key: k.key, did: r.did || this.did });
     this.save();
     return 'made';
@@ -248,7 +243,6 @@ class Nest {
   /** Files other devices sent straight to this one. */
   async inbox() { return (await this.http('inbox', { body: {} })).files.map((f) => this.unlock(f)); }
   async got(f, drop = false) { return this.http('got', { body: { id: f.id, drop } }); }
-  async invite() { return this.http('invite', { body: {} }); }
 }
 
 /** The folders and files directly inside `folder`, with folders that only exist because files are in them. */

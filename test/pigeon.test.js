@@ -94,8 +94,7 @@ test('a nest end to end: make, send a big file and a folder, get them back, shar
 
   // wrong password, strangers, and a full nest
   await assert.rejects(new Nest({ site }).enter('dhruv', 'nope'), /Wrong nest name or password/);
-  await assert.rejects(new Nest({ site }).enter('mallory', 'pw123456', { make: true }), /invite code/);
-  assert.equal(await new Nest({ site }).enter('mallory', 'pw123456'), 'invite', 'asks for an invite instead of failing');
+  assert.equal(await new Nest({ site }).enter('mallory', 'pw123456'), 'new', 'a new name offers to make a nest (no invite code needed)');
   fs.writeFileSync(path.join(src, 'huge.bin'), crypto.randomBytes(25 * 1024 * 1024));
   await assert.rejects(phone.send(path.join(src, 'huge.bin')), /is full/);
 
@@ -163,25 +162,21 @@ test('a drive: folders, rename, move, stars, trash, devices, sending to a device
   await laptop.http('deliver', { body: { ids: [b.id], to: phone.did } });
   assert.deepEqual((await phone.inbox()).map((f) => f.meta.name), ['notes.txt']);
 
-  // invites: the owner makes one, it makes exactly one nest
-  const inv = await laptop.invite();
+  // anyone can make their own nest, no code needed, and it's theirs alone
   process.env.PIGEON_HOME = path.join(tmp, 'home5');
   const friend = new Nest({ site });
-  assert.equal(await friend.enter('friend.one', 'friendpw', { make: true, invite: inv.code }), 'made');
-  await assert.rejects(friend.invite(), /owner/);
-  process.env.PIGEON_HOME = path.join(tmp, 'home6');
-  await assert.rejects(new Nest({ site }).enter('friend.two', 'friendpw', { make: true, invite: inv.code }), /doesn't work/);
+  assert.equal(await friend.enter('friend.one', 'friendpw', { make: true }), 'made');
   assert.equal((await friend.list()).files.length, 0, "a friend's nest is their own");
+  await assert.rejects(friend.http('people', { body: {} }), /owner/);
 });
 
-test("space: each invited nest has its own share, and the owner can give more room or remove a nest", async () => {
+test("space: each nest has its own share, and the owner can give more room or remove a nest", async () => {
   process.env.PIGEON_HOME = path.join(tmp, 'home-space-owner');
   const owner = new Nest({ site });
   assert.equal(await owner.enter('dhruv', 'hunter22'), 'in');
-  const inv = await owner.invite();
   process.env.PIGEON_HOME = path.join(tmp, 'home-space-guest');
   const guest = new Nest({ site });
-  assert.equal(await guest.enter('guest.nest', 'guestpw1', { make: true, invite: inv.code }), 'made');
+  assert.equal(await guest.enter('guest.nest', 'guestpw1', { make: true }), 'made');
   await assert.rejects(guest.http('people', { body: {} }), /owner/);
   let p = await owner.http('people', { body: {} });
   const row = p.nests.find((n) => n.nest === 'guest.nest');

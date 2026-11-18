@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.0
+- No more invite codes: anyone can make their own nest with a name and a password. Each nest still gets its own share of space, so nobody can fill the site for everyone, and nobody can see inside anyone else's nest.
+- `pigeon invite` and "Invite someone" are gone. To stop new nests, set `"signups": "closed"`.
+
 ## 2.2.0
 - Fair space: every invited nest gets its own share (100 MB unless the owner gives it more), so one person can't fill the site for everyone. The whole site still never goes past its total.
 - People and space (owner only, in the browser under your name): how much each nest uses, more room for a nest, or remove one.

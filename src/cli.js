@@ -30,7 +30,6 @@ const HELP = `
       --down                     …only download, never upload
   pigeon open <link>             save a file someone sent you as a pigeon link
   pigeon rm <name>               move something to the trash
-  pigeon invite                  an invite code for someone to make their own nest (site owner)
   pigeon login · logout · whoami · site <address> · update · uninstall · --version
 `;
 
@@ -59,14 +58,6 @@ async function login(nest) {
   const name = (await ask('  Nest name: ')).trim().toLowerCase();
   const pw = await ask('  Password: ', { hidden: true });
   let r = await nest.enter(name, pw, { make: 'ask' });
-  if (r === 'invite') {
-    say(`  There's no nest called "${name}" yet, and this site needs an invite code to make one.`);
-    const code = (await ask('  Invite code (from the site\'s owner): ')).trim();
-    if (!code) throw new Error('No invite code, so no new nest.');
-    const again = await ask('  Password again: ', { hidden: true });
-    if (again !== pw) throw new Error("The two passwords don't match.");
-    r = await nest.enter(name, pw, { make: true, invite: code });
-  }
   if (r === 'new') {
     say(`  There's no nest called "${name}" yet - let's make it.`);
     const again = await ask('  Password again: ', { hidden: true });
@@ -201,13 +192,6 @@ async function main(argv) {
         } catch (e) { if (!o.watch) throw e; say(Th.dim(`  (${e.message} - trying again soon)`)); }
         await new Promise((r) => setTimeout(r, 20000));
       }
-    }
-    case 'invite': {
-      const nest = await ready();
-      const r = await nest.invite();
-      say(`\n  Invite code: ${A.paint(r.code.slice(0, 4) + '-' + r.code.slice(4), { bold: true })}   (one new nest, works for 7 days)`);
-      say(`  Or send them this link: ${nest.site}/#invite=${r.code}\n`);
-      return;
     }
     case 'get': case 'down': case 'pull': {
       const nest = await ready();

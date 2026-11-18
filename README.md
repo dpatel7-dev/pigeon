@@ -55,7 +55,7 @@ into a folder there.
 | Photo from phone → laptop | press **c** in pigeon (or `pigeon catch`), scan the QR code with your phone, send: it lands on the laptop by itself |
 | A copy in a folder | `pigeon sync` keeps `~/Pigeon` matched with your nest (add `--watch` to keep going) |
 | Share with someone | **l** (or `pigeon link notes`): a link + QR code that works for 24 hours, no account needed |
-| Let a friend in | `pigeon invite` (or Invite someone in the browser) gives a code for one new nest of their own |
+| Let a friend in | they just make their own nest (a new name and password): no code needed, and you can't see inside each other's |
 
 Deleting moves things to the **trash** (30 days, and **u** / Undo puts them back).
 Project folders sent from the terminal travel as one bundle and skip what's big
@@ -90,17 +90,17 @@ python3 server/pigeon_server.py --port 8080      # then: pigeon site http://127.
 Settings live in `~/pigeon-data/config.json`:
 
 ```json
-{ "signups": "first", "quota_mb": 400, "nest_mb": 100, "max_file_mb": 400 }
+{ "signups": "open", "quota_mb": 400, "nest_mb": 100, "max_file_mb": 400 }
 ```
 
-`signups`: `"first"` (default) makes the first nest the site's owner (yours); after that,
-only people the owner invites can make one. `"open"` lets anyone make one; `"closed"` lets no one.
+`signups`: `"open"` (default) lets anyone make a nest; `"closed"` lets no one new in.
+The first nest made on a site is its owner (yours).
 
 ### Space
 
 - `quota_mb` is the total for everyone's files together. pigeon never goes past it, so the
   site itself can't run out of disk (PythonAnywhere's free plan has 512 MB for everything).
-- `nest_mb` is each invited nest's own share, so one person can't fill the site for everyone.
+- `nest_mb` is each nest's own share, so one person can't fill the site for everyone.
   Your own nest can use all of `quota_mb`.
 - As the owner, open **your name → People and space** in the browser: see how much each nest
   uses (never what's in it), give a nest more room, or remove one you don't recognise.
