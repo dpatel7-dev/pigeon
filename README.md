@@ -1,4 +1,4 @@
-# 🕊 pigeon
+# pigeon
 
 **Your own locked drive, and files that fly between your devices.**
 
