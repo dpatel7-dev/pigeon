@@ -39,6 +39,21 @@ irm https://djp7.pythonanywhere.com/pigeon/install.ps1 | iex
 
 Then run `pigeon` and make your nest: pick a name and a password. That's it.
 
+### Ways to open your nest
+
+It's the same nest and the same page every way. If one doesn't work for you, use another.
+
+| Way | Type this in Terminal | Good for |
+| --- | --- | --- |
+| The website | (nothing: open <https://djp7.pythonanywhere.com/pigeon>) | any computer, nothing to install |
+| Signed in, from your computer | `pigeon dashboard` | saving files straight into Downloads |
+| A window of its own | `pigeon app` | using pigeon like an app |
+| Your own pigeon, at home | `pigeon home` | when the website is down or blocked: your drive lives on your computer |
+| The terminal | `pigeon` | arrow keys and Enter, drag files onto the window |
+
+`pigeon home` needs Python 3 (on a Mac, `xcode-select --install` adds it). Add `--wifi` so pigeon on
+your other computers can use it too (they type the `pigeon site …` line it shows).
+
 **In a browser** there's nothing to install: open <https://djp7.pythonanywhere.com/pigeon>
 and sign in with the same nest name and password. On a computer that has pigeon,
 `pigeon dashboard` opens the same page already signed in, and Save writes straight

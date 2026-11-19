@@ -1,5 +1,13 @@
 # Changelog
 
+
+## 2.4.0
+- **A new look for pigeon in the browser.** A calm dashboard: a soft grey sidebar (My nest, Recent, Starred, Devices, Shared links, Trash) with your storage as a row of coloured pixels, a white workspace with clean cards, and one colourful strip of pixel art with Coo flying through it. Light and dark.
+- **More ways to open your nest, all with the same page.** "Other ways to open it" (in the sidebar and your account menu) lists them:
+  - `pigeon app` opens your nest in a window of its own, like an app (uses Chrome or Edge if you have one).
+  - `pigeon home` runs your own pigeon on this computer. Your drive lives here instead of on the website, so it works even when the website doesn't. `--wifi` lets pigeon on your other computers use it too.
+  - The website and `pigeon dashboard` work as before.
+
 ## 2.3.0
 - No more invite codes: anyone can make their own nest with a name and a password. Each nest still gets its own share of space, so nobody can fill the site for everyone, and nobody can see inside anyone else's nest.
 - `pigeon invite` and "Invite someone" are gone. To stop new nests, set `"signups": "closed"`.

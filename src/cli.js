@@ -16,6 +16,9 @@ const HELP = `
 
   pigeon                         open your nest (drop files onto the window to send them)
   pigeon dashboard               open your nest in the browser, already signed in
+  pigeon app                     …in a window of its own, like an app
+  pigeon home                    your own pigeon on this computer: works with no website at all
+      --wifi                     …and let pigeon on your other computers use it too
   pigeon send <file|folder>…     send things to your nest (folders skip node_modules, .git…)
       --into Projects/game       …into a folder in your nest
       --to <device>              …straight to another device (it saves them by itself)
@@ -168,6 +171,34 @@ async function main(argv) {
       const nest = await ready();
       for (const d of await nest.devices()) say(`  ${d.me ? Th.teal('●') : Date.now() - d.seen < 120000 ? Th.ok('●') : Th.dim('○')} ${d.name.padEnd(34)} ${Th.dim(d.me ? 'this one' : Date.now() - d.seen < 120000 ? 'online now' : 'last seen ' + ago(d.seen))}${d.waiting ? Th.violet(`  ${d.waiting} waiting for it`) : ''}`);
       say(Th.dim('\n  Send straight to one: pigeon send photo.jpg --to "' + 'iPhone"'));
+      return;
+    }
+    case 'app': case 'window': {
+      await ready();
+      const { serve } = require('./dashboard');
+      const d = await serve({ saveDir: downloads(), openBrowser: false });
+      const how = require('./home').openAsApp(d.url);
+      say(`\n  Your nest is open ${how === 'window' ? 'in its own window' : 'in your browser (for a window of its own, install Google Chrome or Microsoft Edge)'}.`);
+      say(`  ${Th.dim('Files you save land in ' + downloads().replace(require('os').homedir(), '~') + '. Keep this Terminal window open while you use it (Ctrl+C to stop).')}\n`);
+      await new Promise(() => {});
+      return;
+    }
+    case 'home': case 'here': case 'local': {
+      const o = opts(rest, ['port'], ['wifi', 'app', 'no-open']);
+      const H = require('./home');
+      say(`\n  ${A.paint('pigeon home', { bold: true })} ${Th.dim('· starting your own pigeon on this computer…')}`);
+      const h = await H.startHome({ port: Number(o.port) || 8787, wifi: !!o.wifi });
+      say(`\n  It's running. Open it here:  ${A.paint(h.url, { bold: true })}`);
+      if (!o['no-open']) { if (o.app) H.openAsApp(h.url); else require('./tui').open(h.url); }
+      say(`  ${Th.dim('The first time, click "Make a nest" and pick a name and password. Your files stay in')}`);
+      say(`  ${Th.dim(h.data.replace(require('os').homedir(), '~') + ', locked, and nothing goes to the website.')}`);
+      if (o.wifi) say(h.wifiUrl ? `\n  Your other computers can use it too. On each one, type:\n    pigeon site ${h.wifiUrl.replace(/\/$/, '')}\n  ${Th.dim('(same Wi-Fi only, and this computer needs to stay on. Anyone on your Wi-Fi could make a nest here, so use --wifi at home, not at school or in a café)')}` : `\n  ${Th.dim("Couldn't find this computer's Wi-Fi address, so only this computer can use it.")}`);
+      say(`\n  ${Th.dim('To use it from the terminal pigeon too:')} pigeon site ${h.url.replace(/\/$/, '')}`);
+      say(`  ${Th.dim('Keep this window open while you use it. Press Ctrl+C to stop.')}\n`);
+      const stop = () => { h.stop(); process.exit(0); };
+      process.on('SIGINT', stop);
+      process.on('SIGTERM', stop);
+      await new Promise(() => {});
       return;
     }
     case 'dashboard': case 'web': case 'browser': {
