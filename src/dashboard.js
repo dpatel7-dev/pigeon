@@ -24,11 +24,14 @@ function page(nest, base, saveDir) {
     base: `${base}/p`, origin: '', site: nest.site, version: pkg.version,
     sh: `${nest.site}/install.sh`, ps1: `${nest.site}/install.ps1`,
     local: { saveTo: saveDir.replace(os.homedir(), '~'), device: require('./nest').device() },
+    wire: nest.wireKey || ((require('./nest').session.load().pins || {})[nest.site]) || undefined,
     session: { nest: nest.name, token: nest.token, key: nest.key.toString('base64'), did: nest.did },
   };
   return read('web', 'index.html')
     .replace('/*PIGEON_CONFIG*/{}', JSON.stringify(conf).replace(/</g, '\\u003c'))
-    .replace('/*PIGEON_QR*/', read('src', 'qr.js').replace(/<\/script/g, '<\\/script'));
+    .replace('/*PIGEON_QR*/', read('src', 'qr.js').replace(/<\/script/g, '<\\/script'))
+    .replace('/*PIGEON_WIRE*/', read('src', 'wire.js').replace(/<\/script/g, '<\\/script'))
+    .replace('/*PIGEON_DIFF*/', read('src', 'diff.js').replace(/<\/script/g, '<\\/script'));
 }
 
 /** Start it. Resolves with { url, close }. */
@@ -46,7 +49,9 @@ function serve({ port = 0, saveDir = downloads(), openBrowser = true } = {}) {
     const rest = url.pathname.slice(base.length) || '/';
     try {
       if (rest === '/' && req.method === 'GET') {
-        const html = page(new Nest(), base, saveDir);
+        const n = new Nest();
+        await n.connect().catch(() => {});
+        const html = page(n, base, saveDir);
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
         return res.end(html);
       }

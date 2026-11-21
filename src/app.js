@@ -208,11 +208,32 @@ class App {
   async devicesPanel(f) {
     if (!f || (f.dir && !under(this.all, f.path).length)) return;
     try {
-      const list = (await this.nest.devices()).filter((d) => !d.me);
+      let list = (await this.nest.devices()).filter((d) => !d.me);
       if (!list.length) return this.say('No other devices yet: sign in to pigeon on your phone or another computer first.', 'orange', 6000);
+      if (list.length > 1) list = [{ did: 'all', name: `Every other device (${list.length})`, seen: 0, all: true }, ...list];
       this.panel = { kind: 'devices', list, sel: 0, file: f };
     } catch (e) { this.say(e.message, 'err'); }
     this.dirty();
+  }
+
+  async versionsPanel(f) {
+    if (!f || f.dir || !f.fileKey) return;
+    try {
+      const list = await this.nest.versions(f);
+      this.panel = { kind: 'versions', list, sel: Math.min(1, list.length - 1), file: f };
+    } catch (e) { this.say(e.message, 'err'); }
+    this.dirty();
+  }
+
+  async bringBack() {
+    const p = this.panel;
+    const v = p.list[p.sel];
+    this.panel = null;
+    try {
+      await this.nest.restore(v, p.file);
+      this.say(`${p.file.meta.name} is back to how it was ${ago(v.made)}. The one it replaced is kept too.`, 'ok', 6000);
+      await this.refresh(true);
+    } catch (e) { this.say(e.message, 'err'); }
   }
 
   async deliver() {
@@ -222,7 +243,7 @@ class App {
     this.panel = null;
     try {
       await this.nest.http('deliver', { body: { ids: files.map((x) => x.id), to: d.did } });
-      this.say(`On its way to ${d.name}: it lands there by itself when pigeon is open.`, 'ok', 6000);
+      this.say(`On its way to ${d.all ? 'every other device' : d.name}: it lands there by itself when pigeon is open (or roosting).`, 'ok', 6000);
       this.react('send', 1600);
     } catch (e) { this.say(e.message, 'err'); }
   }
@@ -261,8 +282,10 @@ class App {
     const onProgress = (d, t) => { this.job.done = d; this.job.total = t || 1; this.dirty(); };
     try {
       if (next.kind === 'send') {
-        await this.nest.send(next.path, { onProgress, folder: next.folder || [] });
-        this.say(`Sent ${name} - it's in your nest${next.folder && next.folder.length ? ' (' + next.folder.join(' › ') + ')' : ''}.`, 'ok');
+        const folder = next.folder || [];
+        const same = (this.all || []).find((x) => x.done && !x.trashed && x.kind !== 'dir' && x.fileKey && x.meta.name === name && pathKey(x.meta.path) === pathKey(folder));
+        const r = await this.nest.send(next.path, { onProgress, folder, replaces: same ? same.id : undefined });
+        this.say(`Sent ${name} - it's in your nest${folder.length ? ' (' + folder.join(' › ') + ')' : ''}${same ? '; the old one is kept (v shows versions)' : r.copied ? ' (it was already there, so nothing to upload)' : ''}.`, 'ok');
         await this.refresh(true);
       } else {
         const where = await this.nest.get(next.file, downloads(), { onProgress });
@@ -371,6 +394,21 @@ class App {
       else if (k.name === 'escape' || s === 'q') this.panel = null;
       return this.dirty();
     }
+    if (this.panel && this.panel.kind === 'versions') {
+      const p = this.panel;
+      if (k.name === 'up') p.sel = Math.max(0, p.sel - 1);
+      else if (k.name === 'down') p.sel = Math.min(p.list.length - 1, p.sel + 1);
+      else if (k.name === 'return' && p.sel > 0) this.bringBack();
+      else if (s === 's') {
+        const v = p.list[p.sel], ext = path.extname(p.file.meta.name);
+        const name = p.sel ? `${path.basename(p.file.meta.name, ext)} (from ${new Date(v.made).toLocaleDateString().replace(/\//g, '-')})${ext}` : p.file.meta.name;
+        this.queue.push({ kind: 'get', file: { ...v, meta: { ...v.meta, name } } });
+        this.pump();
+        this.panel = null;
+      }
+      else if (k.name === 'escape' || s === 'q') this.panel = null;
+      return this.dirty();
+    }
     if (this.panel) {
       if (k.name === 'escape' || k.name === 'return' || s === 'q') { this.panel = null; this.react('idle'); clearInterval(this.catcher); }
       return this.dirty();
@@ -389,6 +427,7 @@ class App {
         case 'm': this.move(f); return;
         case '*': this.star(f); return;
         case 'p': this.devicesPanel(f); return;
+        case 'v': this.versionsPanel(f); return;
         case 'w': this.dashboard(); return;
         case 'o': if (this.lastSaved) openFile(this.lastSaved); else openFile(downloads()); return;
         case 's': this.say('Drop a file or folder onto this window, or type its path and press Enter.', 'teal', 6000); return;
@@ -482,7 +521,7 @@ class App {
     if (this.flash) return ' ' + A.paint(A.clip(this.flash.text, W - 2), { fg: t[this.flash.kind] || t.teal });
     const f = this.files[this.sel];
     const enter = f && f.dir ? 'enter open' : 'enter save';
-    const opts = this.form ? [''] : this.prompt ? ['enter ok · esc cancel'] : this.panel ? [this.panel.kind === 'devices' ? '↑↓ pick · enter send · esc cancel' : 'esc close']
+    const opts = this.form ? [''] : this.prompt ? ['enter ok · esc cancel'] : this.panel ? [this.panel.kind === 'devices' ? '↑↓ pick · enter send · esc cancel' : this.panel.kind === 'versions' ? '↑↓ pick · enter bring back · s save · esc close' : 'esc close']
       : [`${enter} · ← back · l link · p send to device · n folder · r rename · m move · d delete · w browser · ? keys`, `${enter} · l link · p send to device · d delete · ? keys · q quit`, `${enter} · ? keys · q quit`];
     for (const o of opts) if (A.vwidth(o) + 2 <= W) return ' ' + Th.dim(o);
     return ' ' + Th.dim(A.clip(opts[opts.length - 1], W - 2));
@@ -532,18 +571,26 @@ class App {
     const out = [''];
     if (p.kind === 'help') {
       const rows = [['enter', 'open a folder, or save a file here (or in Downloads)'], ['← →', 'back out of a folder / into one'], ['l', 'make a link + QR code for it (24 hours)'],
-        ['p', 'send it to another device: it lands there by itself'], ['c', 'catch: wait for a file from your phone, and save it the moment it lands'],
+        ['p', 'send it to another device (or all of them): it lands there by itself'], ['v', 'versions: older copies of a file, and bringing one back'], ['c', 'catch: wait for a file from your phone, and save it the moment it lands'],
         ['n', 'new folder'], ['r', 'rename'], ['m', 'move to another folder'], ['*', 'star'], ['d d', 'move to the trash (u undoes it)'],
         ['o', 'open what you just saved'], ['w', 'open your nest in the browser, already signed in'], ['t', 'light / dark'], ['x', 'log out'], ['q', 'quit'], ['', ''],
         ['drop', 'drag files or folders onto this window to send them into this folder'], ['type', 'or type a path and press enter (folders skip node_modules, .git…)']];
       for (const [k, d] of rows.slice(0, h - 1)) out.push('  ' + Th.teal(k.padEnd(6), { bold: true }) + ' ' + Th.dim(d));
       return out;
     }
+    if (p.kind === 'versions') {
+      out.push('  ' + A.paint(`${p.file.meta.name}: every version`, { bold: true }) + Th.dim('  · newest first · the last 20 are kept, for 90 days'), '');
+      p.list.slice(0, h - 5).forEach((v, i) => {
+        out.push((i === p.sel ? Th.teal(' › ', { bold: true }) : '   ') + A.paint((i === 0 ? 'now' : ago(v.made)).padEnd(16), i === p.sel ? { bold: true } : {}) + Th.dim(size(v.size).padStart(9) + '   from ' + A.clip(String(v.meta.from || v.device || '?'), 30)));
+      });
+      out.push('', '  ' + Th.dim(p.list.length > 1 ? 'enter brings the picked one back (the newest is kept too) · s saves a copy here · see what changed: pigeon rewind ' + p.file.meta.name + ' --diff 2' : 'Only one version so far. Send a file with the same name to this folder, and the old one waits here.'));
+      return out;
+    }
     if (p.kind === 'devices') {
       out.push('  ' + A.paint(`Send ${p.file.meta.name} to…`, { bold: true }), '');
       p.list.forEach((d, i) => {
         const live = Date.now() - d.seen < 120000;
-        out.push((i === p.sel ? Th.teal(' › ', { bold: true }) : '   ') + A.paint(fit(d.name, 34), i === p.sel ? { bold: true } : {}) + '  ' + (live ? Th.ok('online now') : Th.dim('last seen ' + ago(d.seen))));
+        out.push((i === p.sel ? Th.teal(' › ', { bold: true }) : '   ') + A.paint(fit(d.name, 34), i === p.sel ? { bold: true } : {}) + '  ' + (d.all ? '' : live ? Th.ok('online now') : Th.dim('last seen ' + ago(d.seen))));
       });
       out.push('', '  ' + Th.dim('It lands on that device by itself the next time pigeon (or pigeon in the browser) is open there.'));
       return out;

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+process.stdout.on('error', (e) => { if (e.code === 'EPIPE') process.exit(0); });
 
 // Keep this first check in plain old JavaScript so even an ancient Node can run it.
 var major = parseInt(process.versions.node.split('.')[0], 10);

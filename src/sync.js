@@ -2,7 +2,7 @@
 // Keep a copy of your nest in a folder on this computer (like Google Drive's
 // desktop app, kept simple):
 //   - files in your nest that aren't in the folder yet are downloaded
-//   - new files you put in the folder are uploaded (and changed ones re-uploaded)
+//   - new files you put in the folder are uploaded (changed ones become a new version: Rewind keeps the old)
 //   - nothing is ever deleted on either side: deleting stays a decision you make
 // What's been matched up is remembered in ~/.pigeon/sync.json.
 
@@ -78,8 +78,8 @@ async function syncOnce(nest, root = defaultRoot(), { up = true, onEvent = () =>
       const folder = rel.split('/').slice(0, -1);
       try {
         if (folder.length) { await nest.mkdir(folder, known); known = (await nest.list()).files; }
-        const r = await nest.send(full, { folder, onProgress: (d, t) => onProgress(path.basename(rel), d, t) });
-        if (rec && byId.has(rec.id)) await nest.trash([byId.get(rec.id)]); // the older copy goes to the trash
+        // a changed file becomes a new version: the older one is kept in Rewind (pigeon rewind <name>)
+        const r = await nest.send(full, { folder, replaces: rec && byId.has(rec.id) ? rec.id : undefined, onProgress: (d, t) => onProgress(path.basename(rel), d, t) });
         st.byId[r.id] = rel;
         st.byPath[rel] = { id: r.id, size: s.size, mtime: s.mtimeMs };
         counts.up++;
