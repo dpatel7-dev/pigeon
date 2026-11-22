@@ -248,6 +248,16 @@ test('the console: a password, then requests and errors, for the owner only', as
   assert.ok(v.rows.every((r) => !/\.\d+$/.test(r.ip)), 'addresses are cut short');
   assert.ok(v.stats.nests >= 1);
   await assert.rejects(laptop.http('console', { body: { token: 'f'.repeat(64) }, auth: false }), /Sign in to the console/);
+  // the owner, signed in, goes straight in: no password
+  const own = await owner.http('console_owner', {});
+  assert.ok((await laptop.http('console', { body: { token: own.token }, auth: false })).rows.length > 0);
+  await assert.rejects(friend.http('console_owner', {}), /owner/);
+  await assert.rejects(friend.http('console_link', {}), /owner/);
+  // and a one-time code for the browser: it works once
+  const { code } = await owner.http('console_link', {});
+  const r = await laptop.http('console_redeem', { body: { code }, auth: false });
+  assert.ok((await laptop.http('console', { body: { token: r.token }, auth: false })).rows.length > 0);
+  await assert.rejects(laptop.http('console_redeem', { body: { code }, auth: false }), /used or is too old/);
 });
 
 test('the wire works the same in Python and in JavaScript', () => {

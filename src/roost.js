@@ -217,4 +217,4 @@ function status() {
   return { installed: fs.existsSync(plistPath()), on: r.status === 0 && /state = running/.test(r.stdout || ''), log: path.join(home(), 'roost.log') };
 }
 
-module.exports = { run, on, off, status, land, rules, saveRules, defaultRules, destFor, kindOf, KINDS, toClipboard, fromClipboard, notify, tilde, untilde };
+module.exports = { run, on, off, status, land, rules, saveRules, defaultRules, destFor, kindOf, KINDS, toClipboard, fromClipboard, notify, tilde, untilde, openThing };

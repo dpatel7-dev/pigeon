@@ -46,7 +46,7 @@ const HELP = `
   pigeon open <link>             save a file someone sent you as a pigeon link
   pigeon rm <name>               move something to the trash
   pigeon barn guide|add|ls|fix|size|rm    more room for your site from free buckets (site owner)
-  pigeon console                 your site's live requests and errors (developers)  --set: its password
+  pigeon console                 your site's live requests and errors, in the browser (owner: Touch ID, no password)  --here: in this window
   pigeon login · logout · whoami · site <address> · update · uninstall · --version
 `;
 
@@ -600,6 +600,28 @@ async function consoleCmd(rest) {
   let saved = {};
   try { saved = JSON.parse(fs.readFileSync(keyFile, 'utf8')); } catch { /* first time */ }
   let token = saved[nest.site];
+  const here = rest.includes('--here') || rest.includes('--errors');
+  // the site's owner, signed in on this computer: no password, just Touch ID (or the Mac's password)
+  if (nest.in) {
+    if (process.platform === 'darwin' && !rest.includes('--no-touch-id')) {
+      const r = await require('./unlock').check('open the developer console');
+      if (!r.ok && (r.why === 'cancelled' || /authentic|password|fail/i.test(r.why))) throw new Error(r.why === 'cancelled' ? 'Cancelled.' : `macOS didn't confirm it's you (${r.why}).`);
+      // (if macOS couldn't ask at all, your pigeon sign-in is enough)
+    }
+    try {
+      if (!here) {
+        const { code } = await nest.http('console_link', {});
+        const url = `${nest.site}/console#c=${code}`;
+        require('./roost').openThing(url);
+        say(`  ${Th.ok('✓')} The console is open in your browser. ${Th.dim('(In this window instead: pigeon console --here)')}`);
+        return;
+      }
+      token = (await nest.http('console_owner', {})).token;
+    } catch (e) {
+      if (e.status !== 403) throw e;
+      say(Th.dim(`  (You aren't this site's owner, so it's the console password.)`));
+    }
+  }
   const login = async () => {
     const pw = await ask(`  Console password for ${nest.site.replace(/^https?:\/\//, '')}: `, { hidden: true });
     token = (await nest.http('console_login', { body: { password: pw }, auth: false })).token;

@@ -179,14 +179,19 @@ You can also add a barn in the browser (People and space › Room), then finish 
 
 ### The developer console
 
-Set a password in **People and space › Developer console** (or `pigeon console --set`). Then:
+You're the site's owner, so you go straight in, no password:
 
 ```sh
-pigeon console            # live: every request, how long it took, every error with its traceback
+pigeon console            # Touch ID (or your Mac's password), then the console opens in your browser
+pigeon console --here     # the same, live in this Terminal window
 ```
 
-or open `https://your-site/pigeon/console`. It shows what was asked (after unsealing), never what's in
-anyone's files, and cuts addresses short. The log is kept to about 2 MB.
+Or in the app: **People and space › Developer console › Open the console**. It shows every request,
+how long it took, and every error with its traceback; what was asked (after unsealing), never what's
+in anyone's files, with addresses cut short. The log is kept to about 2 MB.
+
+To sign in from a computer where you aren't signed in to pigeon, add a password there (or
+`pigeon console --set`), then open `https://your-site/pigeon/console`.
 
 ## Part of a family
 
