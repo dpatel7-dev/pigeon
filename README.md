@@ -11,8 +11,7 @@ device that sends it, and every request travels sealed. The website only stores
 scrambled bytes and doesn't even know your files' or folders' names.
 
 New in pigeon 3: free extra storage (barns), squeezing, no doubles, Rewind
-(old versions), drop boxes, landing by itself in the background, and a
-developer console for whoever runs the site.
+(old versions), drop boxes, and landing by itself in the background.
 
 ```
   [Coo]  pigeon  v3.0.0                                dhruv · djp7.pythonanywhere.com
@@ -176,22 +175,6 @@ Your devices send pieces straight to the bucket; the site only signs URLs that w
 an hour (AWS Signature Version 4), so it never needs to reach the bucket itself. That matters on
 PythonAnywhere's free plan, which can't. The bucket only ever sees scrambled pieces.
 You can also add a barn in the browser (People and space › Room), then finish with `pigeon barn fix`.
-
-### The developer console
-
-You're the site's owner, so you go straight in, no password:
-
-```sh
-pigeon console            # Touch ID (or your Mac's password), then the console opens in your browser
-pigeon console --here     # the same, live in this Terminal window
-```
-
-Or in the app: **People and space › Developer console › Open the console**. It shows every request,
-how long it took, and every error with its traceback; what was asked (after unsealing), never what's
-in anyone's files, with addresses cut short. The log is kept to about 2 MB.
-
-To sign in from a computer where you aren't signed in to pigeon, add a password there (or
-`pigeon console --set`), then open `https://your-site/pigeon/console`.
 
 ## Part of a family
 

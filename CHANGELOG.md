@@ -1,5 +1,8 @@
 # Changelog
 
+## 3.2.0
+- The developer console is gone: `pigeon console`, the console page and its password. A site that had it clears away its sign-ins and request log the next time it starts.
+
 ## 3.1.0
 - The developer console is one command for the site's owner: `pigeon console` asks for Touch ID (or your Mac's password), then opens the console in your browser already signed in. No console password needed. `pigeon console --here` shows it in Terminal instead.
 - In the app: People and space › Developer console › **Open the console** does the same.

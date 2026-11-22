@@ -46,7 +46,6 @@ const HELP = `
   pigeon open <link>             save a file someone sent you as a pigeon link
   pigeon rm <name>               move something to the trash
   pigeon barn guide|add|ls|fix|size|rm    more room for your site from free buckets (site owner)
-  pigeon console                 your site's live requests and errors, in the browser (owner: Touch ID, no password)  --here: in this window
   pigeon login · logout · whoami · site <address> · update · uninstall · --version
 `;
 
@@ -236,7 +235,6 @@ async function main(argv) {
       return;
     }
     case 'barn': case 'barns': return barnCmd(rest);
-    case 'console': return consoleCmd(rest);
     case 'mkdir': {
       const folder = folderOf(rest.join(' '));
       if (!folder.length) throw new Error('Usage: pigeon mkdir Projects/game');
@@ -582,85 +580,6 @@ async function barnCmd(rest) {
     try { return showList(await nest.http('barns', { body: { do: 'remove', id: b.id, force } })); } catch (e) { throw new Error(`${e.message} To remove it anyway: pigeon barn rm ${b.id} --force`); }
   }
   throw new Error('pigeon barn guide | add | ls | fix | size | rm');
-}
-
-/** The developer console: live requests and errors from your pigeon site. */
-async function consoleCmd(rest) {
-  const nest = new Nest();
-  if (rest.includes('--set') || rest.includes('--off')) {
-    const me = await ready();
-    if (rest.includes('--off')) { await me.http('console_set', { body: { password: null } }); say('  The console is off.'); return; }
-    const pw = await ask('  New console password (8 or more characters): ', { hidden: true });
-    if ((await ask('  Again: ', { hidden: true })) !== pw) throw new Error("The two don't match.");
-    await me.http('console_set', { body: { password: pw } });
-    say(`  ${Th.ok('✓')} Set. Open it with: pigeon console   (or ${me.site}/console in a browser)`);
-    return;
-  }
-  const keyFile = path.join(home(), 'console.json');
-  let saved = {};
-  try { saved = JSON.parse(fs.readFileSync(keyFile, 'utf8')); } catch { /* first time */ }
-  let token = saved[nest.site];
-  const here = rest.includes('--here') || rest.includes('--errors');
-  // the site's owner, signed in on this computer: no password, just Touch ID (or the Mac's password)
-  if (nest.in) {
-    if (process.platform === 'darwin' && !rest.includes('--no-touch-id')) {
-      const r = await require('./unlock').check('open the developer console');
-      if (!r.ok && (r.why === 'cancelled' || /authentic|password|fail/i.test(r.why))) throw new Error(r.why === 'cancelled' ? 'Cancelled.' : `macOS didn't confirm it's you (${r.why}).`);
-      // (if macOS couldn't ask at all, your pigeon sign-in is enough)
-    }
-    try {
-      if (!here) {
-        const { code } = await nest.http('console_link', {});
-        const url = `${nest.site}/console#c=${code}`;
-        require('./roost').openThing(url);
-        say(`  ${Th.ok('✓')} The console is open in your browser. ${Th.dim('(In this window instead: pigeon console --here)')}`);
-        return;
-      }
-      token = (await nest.http('console_owner', {})).token;
-    } catch (e) {
-      if (e.status !== 403) throw e;
-      say(Th.dim(`  (You aren't this site's owner, so it's the console password.)`));
-    }
-  }
-  const login = async () => {
-    const pw = await ask(`  Console password for ${nest.site.replace(/^https?:\/\//, '')}: `, { hidden: true });
-    token = (await nest.http('console_login', { body: { password: pw }, auth: false })).token;
-    saved[nest.site] = token;
-    fs.mkdirSync(home(), { recursive: true });
-    fs.writeFileSync(keyFile, JSON.stringify(saved), { mode: 0o600 });
-  };
-  if (!token) await login();
-  const errorsOnly = rest.includes('--errors');
-  const color = (st) => (st >= 500 ? Th.err : st >= 400 ? Th.violet : Th.ok)(String(st || '…'));
-  const row = (r) => `  ${Th.dim(new Date(r.t).toLocaleTimeString().padEnd(12))}${color(r.s)} ${String(r.a || r.p || '').slice(0, 22).padEnd(23)}${String(r.ms || 0).padStart(5)}ms ${Th.dim(String(r.n || '-').slice(0, 14).padEnd(15))}${Th.dim(r.ip || '')}${r.e ? '  ' + Th.err(String(r.e).slice(0, 70)) : ''}`;
-  let since = 0;
-  for (let first = true; ; first = false) {
-    let v;
-    try { v = await nest.http('console', { body: { token, since }, auth: false }); } catch (e) {
-      if (e.status === 401) { say(Th.dim('  (signed out of the console)')); await login(); continue; }
-      say(Th.dim(`  (${e.message} - trying again)`));
-      await new Promise((r) => setTimeout(r, 5000));
-      continue;
-    }
-    if (first) {
-      const s = v.stats;
-      say(`\n  ${A.paint('pigeon console', { bold: true })} ${Th.dim('· ' + nest.site + ' · v' + v.version)}`);
-      say(`  ${s.hour} requests in the last hour · ${s.errorsHour ? Th.err(s.errorsHour + ' errors') : Th.ok('no errors')} · ${s.slowHour} slow · ${s.nests} nests · ${size(s.used)} of ${size(s.capacity)} · ${s.barns} barns${s.chores ? ' · ' + s.chores + ' pieces to clean up' : ''}`);
-      if (v.errors.length) {
-        say(`\n  ${Th.err('Latest errors')}`);
-        for (const e of v.errors.slice(-3)) { say(row(e)); if (e.tb) say(Th.dim(e.tb.trim().split('\n').slice(-6).map((l) => '      ' + l).join('\n'))); }
-      }
-      say(`\n  ${Th.dim('time        status what                     time   nest           from')}`);
-      say(Th.dim('  (live: new requests show up as they happen. Ctrl+C to stop)\n'));
-    }
-    const rows = v.rows.filter((r) => !errorsOnly || r.s >= 400);
-    for (const r of first ? rows.slice(-25) : rows) {
-      say(row(r));
-      if (r.tb && !first) say(Th.dim(r.tb.trim().split('\n').slice(-6).map((l) => '      ' + l).join('\n')));
-    }
-    if (v.rows.length) since = v.rows[v.rows.length - 1].t;
-    await new Promise((r) => setTimeout(r, 2000));
-  }
 }
 
 function installUrl(kind) {

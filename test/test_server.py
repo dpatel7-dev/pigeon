@@ -63,13 +63,15 @@ class Sweep(unittest.TestCase):
         self.assertIsNone(self.p.one('SELECT id FROM files WHERE id = ?', first), 'the oldest went')
         self.assertTrue(os.path.isdir(os.path.join(self.dir, 'files', cur)))
 
-    def test_console_log_stays_small(self):
-        c = S.Console(self.dir)
-        c.LIMIT = 20000
-        for i in range(2000):
-            c.add({'t': i, 'a': 'list', 's': 200})
-        self.assertLess(os.path.getsize(c.path), 20000)
-        self.assertEqual(c.tail(1990, 0)[-1]['t'], 1999)
+    def test_the_old_console_is_cleared_away(self):
+        # pigeon 3.0 and 3.1 had a developer console; a site that had one loses its table, password and log
+        self.p.q("INSERT OR REPLACE INTO settings VALUES ('console_hash', 'x')")
+        self.p.db.execute('CREATE TABLE IF NOT EXISTS consoles (hash TEXT PRIMARY KEY, made INTEGER, seen INTEGER)')
+        open(os.path.join(self.dir, 'console.jsonl'), 'w').write('{}\n')
+        p2 = S.Pigeon(self.dir)
+        self.assertIsNone(p2._setting('console_hash'))
+        self.assertEqual(p2.q("SELECT name FROM sqlite_master WHERE name = 'consoles'"), [])
+        self.assertFalse(os.path.exists(os.path.join(self.dir, 'console.jsonl')))
 
 
 if __name__ == '__main__':

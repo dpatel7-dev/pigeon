@@ -1,5 +1,5 @@
 'use strict';
-// pigeon 3: sealed requests, squeezing, no doubles, Rewind, homing, drop boxes, barns, the console.
+// pigeon 3: sealed requests, squeezing, no doubles, Rewind, homing, drop boxes, barns.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -232,32 +232,9 @@ test('barns: pieces go straight to a bucket, come back, and are cleaned up', asy
   } finally { s3.close(); }
 });
 
-test('the console: a password, then requests and errors, for the owner only', async () => {
-  await assert.rejects(laptop.http('console_login', { body: { password: 'x' }, auth: false }), /off on this site/);
-  const friend = as('friend'); // someone else's nest on the same site
-  await friend.enter('sam', 'samspassword', { make: true });
-  await assert.rejects(friend.http('console_set', { body: { password: 'devpassword1' } }), /owner/);
-  await assert.rejects(owner.http('console_set', { body: { password: 'short' } }), /8 characters/);
-  await owner.http('console_set', { body: { password: 'devpassword1' } });
-  await assert.rejects(laptop.http('console_login', { body: { password: 'nope-nope' }, auth: false }), /Wrong console password/);
-  const { token } = await laptop.http('console_login', { body: { password: 'devpassword1' }, auth: false });
-  const v = await laptop.http('console', { body: { token }, auth: false });
-  assert.ok(v.rows.length > 20);
-  assert.ok(v.rows.some((r) => r.a === 'list' && r.n === 'dhruv' && r.s === 200), 'it sees what was asked, after unsealing');
-  assert.ok(v.rows.some((r) => r.a === 'console_login' && r.s === 403));
-  assert.ok(v.rows.every((r) => !/\.\d+$/.test(r.ip)), 'addresses are cut short');
-  assert.ok(v.stats.nests >= 1);
-  await assert.rejects(laptop.http('console', { body: { token: 'f'.repeat(64) }, auth: false }), /Sign in to the console/);
-  // the owner, signed in, goes straight in: no password
-  const own = await owner.http('console_owner', {});
-  assert.ok((await laptop.http('console', { body: { token: own.token }, auth: false })).rows.length > 0);
-  await assert.rejects(friend.http('console_owner', {}), /owner/);
-  await assert.rejects(friend.http('console_link', {}), /owner/);
-  // and a one-time code for the browser: it works once
-  const { code } = await owner.http('console_link', {});
-  const r = await laptop.http('console_redeem', { body: { code }, auth: false });
-  assert.ok((await laptop.http('console', { body: { token: r.token }, auth: false })).rows.length > 0);
-  await assert.rejects(laptop.http('console_redeem', { body: { code }, auth: false }), /used or is too old/);
+test('there is no developer console any more', async () => {
+  await assert.rejects(owner.http('console_link', {}), /doesn't know "console_link"/);
+  await assert.rejects(laptop.http('console', { body: { token: 'f'.repeat(64) }, auth: false }), /log in/);
 });
 
 test('the wire works the same in Python and in JavaScript', () => {
@@ -276,7 +253,7 @@ print(json.dumps({'y': y.hex(), 'k': k.hex(), 's': _stream(k[:32], bytes(16), b'
   assert.equal(W.hex(W.stream(new W.HmacKey(k.subarray(0, 32)), new Uint8Array(16), Buffer.from('hello pigeon, hello wire!'.repeat(3)))), o.s);
 });
 
-test('server-only checks (Python): presigning, expiry, version limits, the console log', () => {
+test('server-only checks (Python): presigning, expiry, version limits, the old console cleared away', () => {
   const r = spawnSync('python3', [path.join(__dirname, 'test_server.py')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
 });
