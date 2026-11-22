@@ -1,5 +1,8 @@
 # Changelog
 
+## 3.3.0
+- **Light or dark, set once for every app:** press **L** in pca (or `pca look light`, `pca look dark`, `pca look auto`). The dashboard on your computer (`pigeon web`) follows it.
+
 ## 3.2.0
 - The developer console is gone: `pigeon console`, the console page and its password. A site that had it clears away its sign-ins and request log the next time it starts.
 

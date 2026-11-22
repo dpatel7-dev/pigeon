@@ -483,6 +483,9 @@ dialog::backdrop { background: rgba(15, 15, 20, .4); }
 
   // ── theme ──
   var theme = (function () { try { return localStorage.getItem('pigeon-theme') || 'auto'; } catch (e) { return 'auto'; } })();
+  // light or dark for every app is set in pca (on this computer): when that changes, it wins over the button here
+  (function () { try { var L = window.__LOOK__; if (L && localStorage.getItem('pigeon-look') !== L) { localStorage.setItem('pigeon-look', L); theme = 'auto'; localStorage.removeItem('pigeon-theme'); } } catch (e) { /* fine */ } })();
+  addEventListener('lookchange', function () { theme = 'auto'; try { localStorage.setItem('pigeon-look', window.__LOOK__); localStorage.removeItem('pigeon-theme'); } catch (e) { /* fine */ } paintTheme(); });
   function paintTheme() {
     var dark = theme === 'dark' || (theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';

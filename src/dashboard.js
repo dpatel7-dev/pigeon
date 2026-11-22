@@ -17,6 +17,7 @@ const { open: openThing } = require('./tui');
 const pkg = require('../package.json');
 
 const ROOT = path.join(__dirname, '..');
+const Look = require('./look');
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 function page(nest, base, saveDir) {
@@ -51,10 +52,11 @@ function serve({ port = 0, saveDir = downloads(), openBrowser = true } = {}) {
       if (rest === '/' && req.method === 'GET') {
         const n = new Nest();
         await n.connect().catch(() => {});
-        const html = page(n, base, saveDir);
+        const html = Look.inject(page(n, base, saveDir), Look.read(), base + '/__look');
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
         return res.end(html);
       }
+      if (rest === '/__look' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(JSON.stringify({ look: Look.read() })); } // light or dark, set in pca
       if (rest.startsWith('/p/api')) return proxy(nest, req, res, rest.slice(2) + url.search);
       if (rest === '/local/save' && req.method === 'POST') {
         const dir = path.join(saveDir, ...(url.searchParams.get('path') || '').split('/').filter(Boolean).map(safeName));
